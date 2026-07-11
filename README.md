@@ -49,7 +49,7 @@ artifact = build(
 # artifact carries the binary bytes, the signed manifest, and the build log.
 ```
 
-[`SKILL.md`](SKILL.md) is the full CLI/API guide (`build`, `verify`,
+[`SKILL.md`](https://github.com/machinavitalis/jaxility/blob/main/SKILL.md) is the full CLI/API guide (`build`, `verify`,
 `bench`, `hil`, `targets`, `coverage`).
 
 ## What you can deploy today
@@ -190,9 +190,9 @@ flowchart LR
 | Deploy to Qualcomm Hexagon NPU | JAX → ONNX → Hexagon SDK | RB3 Gen 2 / IQ10 | v0.2; vendor toolchain |
 
 The full picture (with code citations and ADR pointers) lives in
-[`CLAIMS.md`](CLAIMS.md) (what each lane guarantees today) and
-[`KNOWN_GAPS.md`](KNOWN_GAPS.md) (which lanes are dotted-orange
-above and why). [`AGENTS/DECISIONS.md`](AGENTS/DECISIONS.md) carries
+[`CLAIMS.md`](https://github.com/machinavitalis/jaxility/blob/main/CLAIMS.md) (what each lane guarantees today) and
+[`KNOWN_GAPS.md`](https://github.com/machinavitalis/jaxility/blob/main/KNOWN_GAPS.md) (which lanes are dotted-orange
+above and why). [`AGENTS/DECISIONS.md`](https://github.com/machinavitalis/jaxility/blob/main/AGENTS/DECISIONS.md) carries
 the architectural ADRs — ADR-001 (CasADi as component), ADR-016 (no
 MJX-as-source), and ADR-017 (L4CasADi for embedded learned
 functions, Proposed) are the load-bearing ones for the diagram
@@ -288,13 +288,13 @@ across rebuilds and fails loud on any unverified toolchain pin — so
 
 ### For the full picture
 
-- [`CLAIMS.md`](CLAIMS.md) — the exhaustive list of what Jaxility
+- [`CLAIMS.md`](https://github.com/machinavitalis/jaxility/blob/main/CLAIMS.md) — the exhaustive list of what Jaxility
   guarantees, with code citations.
-- [`KNOWN_GAPS.md`](KNOWN_GAPS.md) — the symmetric list of what
+- [`KNOWN_GAPS.md`](https://github.com/machinavitalis/jaxility/blob/main/KNOWN_GAPS.md) — the symmetric list of what
   Jaxility explicitly does not do, with workarounds and ADR
   pointers.
-- [`AGENTS/CONTEXT.md`](AGENTS/CONTEXT.md) — architectural
+- [`AGENTS/CONTEXT.md`](https://github.com/machinavitalis/jaxility/blob/main/AGENTS/CONTEXT.md) — architectural
   orientation.
-- [`AGENTS/DECISIONS.md`](AGENTS/DECISIONS.md) — the ADR log
+- [`AGENTS/DECISIONS.md`](https://github.com/machinavitalis/jaxility/blob/main/AGENTS/DECISIONS.md) — the ADR log
   (16 ADRs).
-- [`CHANGELOG.md`](CHANGELOG.md) — what shipped, grouped by theme.
+- [`CHANGELOG.md`](https://github.com/machinavitalis/jaxility/blob/main/CHANGELOG.md) — what shipped, grouped by theme.
