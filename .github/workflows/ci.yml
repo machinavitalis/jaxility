@@ -1,0 +1,245 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 The Jaxility Authors
+#
+# Jaxility CI. T-002 / ADR-015.
+#
+# Two-step install routes around the OQ-6 problem that Jaxonomy and
+# Jaxterity are private GitHub repos not on PyPI:
+#
+# 1. ``pip install -e . --no-deps`` registers the Jaxility editable
+#    install without trying to resolve jaxterity / jaxonomy from a
+#    package index.
+# 2. The explicit dev-tools list pulls every PyPI-resolvable
+#    dependency the suite needs to import and run.
+#
+# Tests that need jaxterity (``test_jaxterity_chain.py``, parts of
+# ``test_zoo.py``) gate on ``pytest.importorskip("jaxterity")`` and
+# skip cleanly. Tests that need acados / tera_renderer also skip
+# cleanly because their fixtures gate on ``ACADOS_SOURCE_DIR`` and
+# ``$ACADOS_SOURCE_DIR/bin/t_renderer`` (neither is set in CI).
+#
+# A nightly Jaxterity-installed job is the natural next step once
+# the upstream repos either turn public or a PAT secret lands.
+
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  # The cross-deps job below is heavy (it cross-builds acados / blasfeo
+  # / hpipm for aarch64 from source). It runs on demand and weekly, not
+  # on every push, so the per-PR gate stays fast.
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+jobs:
+  check:
+    name: lint + types + tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Cache JAX compilation cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/jax
+          key: jax-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Install Jaxility (--no-deps) + explicit dev tools
+        run: |
+          python -m pip install --upgrade pip
+          # Step 1: register Jaxility editable, but skip upstream resolution
+          # (jaxterity / jaxonomy are private GH repos not on PyPI; ADR-015).
+          pip install -e . --no-deps
+          # Step 2: pull every PyPI-resolvable dependency the suite needs.
+          pip install \
+            "ruff>=0.6" \
+            "mypy>=1.8" \
+            "pytest>=8.0" \
+            "hypothesis>=6.0" \
+            "numpy" \
+            "jax[cpu]" \
+            "casadi>=3.7,<3.8" \
+            "pydantic>=2.6" \
+            "blake3>=0.4" \
+            "cryptography>=42" \
+            "fastmcp>=0.2"
+
+      # Pi 5 Tier-B install: Arm GNU Toolchain 15.2.Rel1 linux-x86_64
+      # host build of aarch64-none-linux-gnu. Arm doesn't ship a
+      # darwin-arm64 host build of this chain in 15.2.Rel1, so this
+      # cross-compile lane is exercised in CI rather than locally
+      # (see KNOWN_GAPS.md "Tier B" section).
+      - name: Cache Arm GNU aarch64-linux toolchain
+        id: cache-arm-gnu-aarch64
+        uses: actions/cache@v4
+        with:
+          path: /opt/arm-gnu-toolchain-15.2.rel1
+          key: arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-linux-gnu
+
+      - name: Install Arm GNU aarch64-linux toolchain (15.2.Rel1)
+        if: steps.cache-arm-gnu-aarch64.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 10 --retry-all-errors \
+            -o /tmp/arm-gnu-aarch64.tar.xz "$url"
+          sudo mkdir -p /opt/arm-gnu-toolchain-15.2.rel1
+          sudo tar -xJf /tmp/arm-gnu-aarch64.tar.xz \
+            -C /opt/arm-gnu-toolchain-15.2.rel1 --strip-components=1
+          rm /tmp/arm-gnu-aarch64.tar.xz
+
+      - name: Add Arm GNU aarch64-linux toolchain to PATH
+        run: |
+          echo "/opt/arm-gnu-toolchain-15.2.rel1/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Arm GNU aarch64-linux toolchain
+        run: |
+          aarch64-none-linux-gnu-gcc --version
+
+      # Audit M-1 close: install arm-none-eabi-gcc 15.2.Rel1 so the
+      # Cortex-M Tier-B lane (test_real_arm_none_eabi_* and the
+      # Cortex-M runtime archive build) actually runs on CI. Previous
+      # claim that the Cortex-M lane was "live locally + CI" was
+      # false; the suite silently skipped these tests on Linux
+      # runners. Ubuntu's apt ``gcc-arm-none-eabi`` package ships
+      # 13.2.rel1 which would mismatch the pin; we install the exact
+      # 15.2.Rel1 archive from developer.arm.com, mirroring the
+      # aarch64-linux install step above.
+      - name: Cache Arm GNU arm-none-eabi toolchain
+        id: cache-arm-gnu-eabi
+        uses: actions/cache@v4
+        with:
+          path: /opt/arm-gnu-toolchain-15.2.rel1-eabi
+          key: arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi
+
+      - name: Install Arm GNU arm-none-eabi toolchain (15.2.Rel1)
+        if: steps.cache-arm-gnu-eabi.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 10 --retry-all-errors \
+            -o /tmp/arm-gnu-eabi.tar.xz "$url"
+          sudo mkdir -p /opt/arm-gnu-toolchain-15.2.rel1-eabi
+          sudo tar -xJf /tmp/arm-gnu-eabi.tar.xz \
+            -C /opt/arm-gnu-toolchain-15.2.rel1-eabi --strip-components=1
+          rm /tmp/arm-gnu-eabi.tar.xz
+
+      - name: Add Arm GNU arm-none-eabi toolchain to PATH
+        run: |
+          echo "/opt/arm-gnu-toolchain-15.2.rel1-eabi/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Arm GNU arm-none-eabi toolchain
+        run: |
+          arm-none-eabi-gcc --version
+
+      - name: Ruff lint
+        run: ruff check jaxility test
+
+      - name: Ruff format
+        run: ruff format --check jaxility test
+
+      - name: Mypy
+        run: mypy jaxility/
+
+      - name: Pytest
+        # Tests that need jaxterity, acados, or tera_renderer skip
+        # cleanly via importorskip / env-var presence checks. The CI
+        # job exercises the pure-Python contracts on every push / PR.
+        # The Pi 5 Tier-B real-cross-compile test now lights up here
+        # because aarch64-none-linux-gnu-gcc is on PATH.
+        run: pytest test/ -q
+
+  # ---------------------------------------------------------------------
+  # cross-deps — verify the acados/blasfeo/hpipm aarch64 cross-build
+  # (T-031 follow-up, ADR-018). Heavy: it clones the pinned acados
+  # checkout and cross-builds the three static archives from source for
+  # Cortex-A76. Runs on demand (workflow_dispatch) and weekly (schedule)
+  # rather than on every push, so the per-PR gate stays fast. This is
+  # the CI-verification path named in KNOWN_GAPS.md "Linker gap".
+  # ---------------------------------------------------------------------
+  cross-deps:
+    name: cross-build acados deps (aarch64)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Jaxility (--no-deps) + explicit dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --no-deps
+          pip install \
+            "pytest>=8.0" \
+            "numpy" \
+            "jax[cpu]" \
+            "casadi>=3.7,<3.8" \
+            "pydantic>=2.6" \
+            "blake3>=0.4"
+
+      - name: Cache Arm GNU aarch64-linux toolchain
+        id: cache-arm-gnu-aarch64
+        uses: actions/cache@v4
+        with:
+          path: /opt/arm-gnu-toolchain-15.2.rel1
+          key: arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-linux-gnu
+
+      - name: Install Arm GNU aarch64-linux toolchain (15.2.Rel1)
+        if: steps.cache-arm-gnu-aarch64.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://developer.arm.com/-/media/Files/downloads/gnu/15.2.rel1/binrel/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 10 --retry-all-errors \
+            -o /tmp/arm-gnu-aarch64.tar.xz "$url"
+          sudo mkdir -p /opt/arm-gnu-toolchain-15.2.rel1
+          sudo tar -xJf /tmp/arm-gnu-aarch64.tar.xz \
+            -C /opt/arm-gnu-toolchain-15.2.rel1 --strip-components=1
+          rm /tmp/arm-gnu-aarch64.tar.xz
+
+      - name: Add Arm GNU aarch64-linux toolchain to PATH
+        run: echo "/opt/arm-gnu-toolchain-15.2.rel1/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain + cmake
+        run: |
+          aarch64-none-linux-gnu-gcc --version
+          cmake --version
+
+      # Pin to the acados revision Jaxility's host path records
+      # (JAXILITY_ACADOS_LIBRARY_PIN = v0.5.4-7-gdc6668f85 in
+      # jaxility/manifest/toolchain_detect.py). Submodules pull in
+      # blasfeo / hpipm under external/.
+      - name: Clone pinned acados checkout (recursive)
+        run: |
+          set -euo pipefail
+          git clone https://github.com/acados/acados.git "$HOME/acados"
+          cd "$HOME/acados"
+          git checkout dc6668f85
+          git submodule update --init --recursive
+
+      - name: Cross-build acados deps + verify (Tier B)
+        run: |
+          export JAXILITY_ACADOS_DIR="$HOME/acados"
+          # -m slow selects the two Tier-B tests. The archive-build test
+          # runs (toolchain + cmake + acados source all present); the
+          # end-to-end link test importer-skips (no host acados_template
+          # / t_renderer on this lean job).
+          pytest test/unit/test_builder_deps.py -m slow -q

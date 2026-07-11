@@ -1,0 +1,143 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 The Jaxility Authors
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaxility"
+version = "1.0.0"
+description = "Open-source compiler from JAX-trained robotics to Arm silicon, with signed attestation manifests. Consumes Jaxterity calibrated robots; emits cross-compiled binaries with verifiable provenance."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "The Jaxility Authors" }]
+keywords = [
+  "robotics",
+  "jax",
+  "embedded",
+  "arm",
+  "compiler",
+  "code-generation",
+  "attestation",
+  "mpc",
+  "acados",
+]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Software Development :: Compilers",
+]
+
+# Core runtime dependencies. ``jaxonomy`` ships transitively through
+# ``jaxterity``; both are editable installs from local checkouts during
+# bootstrap. The ``jaxterity`` requirement is currently unbounded because the
+# local checkout is still ``0.0.1.dev0``; the T-001 spec target is
+# ``jaxterity>=0.2,<0.3`` and will be tightened once Jaxterity tags 0.2.
+dependencies = [
+  "jaxterity",
+  "casadi>=3.7,<3.8",     # JAX-to-acados symbolic boundary (ADR-001)
+  "pydantic>=2.6",        # manifest, target, coverage schemas (PATTERNS §3.3)
+  "cryptography>=42",     # manifest hashing primitives
+  "blake3>=0.4",          # canonical hash for manifest chain (ADR-005)
+]
+
+[project.urls]
+Repository = "https://github.com/machinavitalis/jaxility"
+Issues = "https://github.com/machinavitalis/jaxility/issues"
+Changelog = "https://github.com/machinavitalis/jaxility/blob/main/CHANGELOG.md"
+
+# Optional extras. Most are placeholders for now; populated as later work
+# brings in the corresponding integrations. See AGENTS/TOOLCHAINS.md for the
+# pinning policy.
+[project.optional-dependencies]
+# acados-template is not consistently published to PyPI; teams typically build
+# from source. The extra is reserved so a future direct dep can land cleanly.
+acados = []
+# Learned-policy export (T-040): JAX policy -> ONNX, run/checked via ONNX
+# Runtime; flax provides the realistic policy modules the tests exercise.
+policy = [
+  "onnx>=1.16",
+  "onnxruntime>=1.18",
+  "flax>=0.8",
+]
+# ONNX → LiteRT (.tflite) conversion (T-041, priority path): onnx2tf drives
+# ONNX → TF → TFLite (pulls tensorflow + tf_keras + onnx graph helpers);
+# ai-edge-litert is the on-device interpreter for parity checks.
+litert = [
+  "onnx2tf>=1.20",
+  "tensorflow>=2.16",
+  "tf-keras>=2.16",
+  "onnx-graphsurgeon",
+  "ai-edge-litert>=1.0",
+]
+# ONNX → ExecuTorch (.pte) conversion (T-041, parallel path): ONNX → torch
+# (onnx2torch) → torch.export → executorch.
+executorch = [
+  "torch>=2.4",
+  "onnx2torch>=1.5",
+  "executorch>=0.4",
+]
+# Arm FVP (Fixed Virtual Platforms) is a system-level dependency; no PyPI deps.
+fvp = []
+# Benchmark harness extras (psutil etc.) populated later.
+bench = []
+# Vendor SDKs are system-level / out-of-PyPI installs; extras are reserved.
+targets-cortex-m = []
+targets-cortex-a = []
+targets-qualcomm = []
+# MCP server (FastMCP) — wired in T-004.
+mcp = ["fastmcp>=0.2"]
+# Development / CI tooling. Kept out of ``all``; this is the local-gate suite.
+dev = [
+  "ruff>=0.6",
+  "mypy>=1.8",
+  "pytest>=8.0",
+  "hypothesis>=6.0",      # equivalence-check property tests (T-010)
+  "fastmcp>=0.2",         # so the T-004 MCP tests run in [dev]
+]
+# Aggregate runtime extras (without [dev]).
+all = ["fastmcp>=0.2"]
+
+[project.scripts]
+jaxility = "jaxility.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jaxility*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+# jaxtyping shape annotations are string literals; pyflakes' F722 misreads them.
+ignore = ["F722"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+
+# Jaxility type-checks its own code only. Upstream packages are imported but
+# not vendored; mypy must not chase into them and report their type errors as
+# Jaxility's. Treat them as opaque dependencies (mirrors Jaxterity's policy).
+[[tool.mypy.overrides]]
+module = ["jaxonomy.*", "jaxterity.*", "casadi.*", "fastmcp.*"]
+follow_imports = "skip"
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+markers = [
+  "unit: pure-Python tests with no toolchains or hardware (PATTERNS §7.1).",
+  "host: host-only builds; requires CasADi and acados (PATTERNS §7.1).",
+  "hil: hardware-in-the-loop; runs on FVP or tethered hardware (PATTERNS §7.1).",
+  "nightly: long-form tests run only on the nightly CI schedule.",
+  "slow: slower tests that may be deselected from the PR-time subset.",
+]

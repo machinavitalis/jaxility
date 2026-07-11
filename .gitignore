@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# JAX / XLA compilation cache
+.jax_cache/
+
+# Jaxility build outputs / artifact cache
+artifacts/
+build-cache/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
+# Claude Code local worktrees/config (never track)
+.claude/
+
+# Internal working docs kept out of the public tree (local symlinks; never track)
+/AGENTS/TODO.md
+/AGENTS/LESSONS.md
+/DONE.md
