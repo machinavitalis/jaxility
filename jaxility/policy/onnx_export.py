@@ -30,10 +30,28 @@ from typing import Any
 
 import jax
 import numpy as np
-import onnx
-from onnx import TensorProto, helper, numpy_helper
 
-from ..errors import CoverageError
+from ..errors import CoverageError, ToolchainError
+
+try:  # ``onnx`` ships in the optional ``[policy]`` extra; import must not need it
+    import onnx
+    from onnx import TensorProto, helper, numpy_helper
+except ImportError:  # pragma: no cover - exercised in the extra-less CI env
+    onnx = None  # type: ignore[assignment]
+    # ``TensorProto`` is a class, so None-assigning it is [misc], not [assignment].
+    TensorProto = helper = numpy_helper = None  # type: ignore[assignment, misc]
+
+
+def _require_onnx() -> None:
+    """Raise a structured :class:`ToolchainError` if the optional ``[policy]``
+    extra (``onnx``) is not installed — loud failure at call time, invariant 7
+    (mirrors :func:`jaxility.policy.litert._require_converter`)."""
+    if onnx is None:
+        raise ToolchainError(
+            "ONNX export needs the optional 'onnx' dependency; it is not "
+            "installed. Install the policy extra: pip install 'jaxility[policy]'."
+        )
+
 
 ONNX_OPSET = 18
 """ONNX opset the exporter targets (well within ONNX Runtime 1.25 support)."""
@@ -61,6 +79,7 @@ class PolicyOnnxModel:
 
     def model(self) -> onnx.ModelProto:
         """Deserialise back to a ``ModelProto``."""
+        _require_onnx()
         return onnx.load_from_string(self.model_bytes)
 
 
@@ -323,7 +342,10 @@ def export_policy_to_onnx(
     ------
     CoverageError
         If ``fn`` uses a primitive outside :data:`SUPPORTED_PRIMITIVES`.
+    ToolchainError
+        If the optional ``[policy]`` extra (``onnx``) is not installed.
     """
+    _require_onnx()
     sample = [np.zeros(s, dtype=np.float32) for s in in_shapes]
     closed = jax.make_jaxpr(fn)(*sample)
     jaxpr = closed.jaxpr
