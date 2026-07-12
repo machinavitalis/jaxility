@@ -82,8 +82,13 @@ def test_bench_source_times_the_composed_cycle() -> None:
 @pytest.mark.unit
 def test_bench_argv_is_the_bench_runner_form() -> None:
     src = generate_dual_path_bench_source(
-        model_name="m", nx=4, nu=1, policy=_policy(), plan=_plan(),
-        initial_state=_INITIAL_STATE, n_warmup=50,
+        model_name="m",
+        nx=4,
+        nu=1,
+        policy=_policy(),
+        plan=_plan(),
+        initial_state=_INITIAL_STATE,
+        n_warmup=50,
     )
     assert "usage: %s <n_cycles> <seed>" in src
     assert "#define JX_N_WARMUP 50L" in src
