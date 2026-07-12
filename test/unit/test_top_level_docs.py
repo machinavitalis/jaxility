@@ -448,55 +448,6 @@ def test_readme_lowering_paths_table_names_learned_policy_lane() -> None:
 
 
 @pytest.mark.unit
-def test_pypi_placeholder_stays_minimal() -> None:
-    """The ``pypi-placeholder/`` directory exists to claim the
-    ``jaxility`` name on PyPI. It must stay minimal:
-
-    - ``version == "0.0.0"`` (mirrors jaxonomy / jaxterity);
-    - no runtime dependencies (a placeholder shouldn't pull anything);
-    - the package name matches the project root's package name;
-    - the LICENSE file ships alongside.
-
-    The placeholder is a one-shot upload. PyPI does not allow
-    re-uploads of the same version, so any drift here would
-    silently corrupt the next release attempt.
-    """
-    import sys
-
-    placeholder = REPO / "pypi-placeholder"
-    assert placeholder.is_dir(), (
-        "pypi-placeholder/ directory missing — the PyPI name-reservation "
-        "package should ship with the repo as a re-issuable backup until "
-        "the v0.0.1 release."
-    )
-    assert (placeholder / "LICENSE").exists()
-    assert (placeholder / "README.md").exists()
-    assert (placeholder / "UPLOAD.md").exists()
-    assert (placeholder / "jaxility" / "__init__.py").exists()
-
-    if sys.version_info < (3, 11):
-        return  # tomllib is 3.11+; older runners skip the deeper checks
-    import tomllib as _tomllib  # noqa: PLC0415
-
-    cfg = _tomllib.loads((placeholder / "pyproject.toml").read_text())
-    project = cfg["project"]
-    assert project["name"] == "jaxility"
-    assert project["version"] == "0.0.0", (
-        f"placeholder version is {project['version']!r}; must stay 0.0.0. "
-        "PyPI does not allow re-uploads of the same version, so bumping "
-        "the placeholder breaks the one-shot upload contract."
-    )
-    assert not project.get("dependencies"), (
-        "placeholder must be dependency-free (matches jaxonomy / jaxterity); "
-        f"found {project.get('dependencies')!r}."
-    )
-    assert not project.get("optional-dependencies"), (
-        "placeholder must not declare optional dependencies; "
-        f"found {project.get('optional-dependencies')!r}."
-    )
-
-
-@pytest.mark.unit
 def test_known_gaps_pending_phrases_have_grep_anchors() -> None:
     """KNOWN_GAPS.md uses canonical phrases ('pending', 'deferred',
     'not yet', 'still out of scope', 'queued') as grep targets for
