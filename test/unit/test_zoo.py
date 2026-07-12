@@ -67,15 +67,15 @@ def test_load_raises_on_unknown_entry() -> None:
 def test_real_and_stub_status_distinction(
     configs: dict[str, ZooDeploymentConfig],
 ) -> None:
-    """Cartpole + SO-100 are real robots; Crazyflie + humanoid are stubs."""
+    """Cartpole + SO-100 + Crazyflie are real robots; only the humanoid is a stub."""
     real = {name for name, c in configs.items() if c.upstream_status == "real-robot"}
     stub = {
         name
         for name, c in configs.items()
         if c.upstream_status == "stub-pending-jaxterity"
     }
-    assert real == {"cartpole", "so100"}
-    assert stub == {"crazyflie", "berkeley_humanoid_lite"}
+    assert real == {"cartpole", "so100", "crazyflie"}
+    assert stub == {"berkeley_humanoid_lite"}
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ def test_real_and_stub_status_distinction(
 @pytest.mark.parametrize("name", EXPECTED_ENTRIES)
 def test_entry_mock_builds_passes_equivalence(name: str) -> None:
     """Each zoo entry mock-builds end-to-end and its equivalence check passes."""
-    if name == "cartpole" or name == "so100":
+    if load(name).upstream_status == "real-robot":
         pytest.importorskip("jaxterity")
 
     entry = load(name)
@@ -107,7 +107,7 @@ def test_entry_mock_builds_passes_equivalence(name: str) -> None:
 @pytest.mark.parametrize("name", EXPECTED_ENTRIES)
 def test_entry_manifest_verifies(name: str) -> None:
     """Each zoo entry's manifest verifies under the OSS signer."""
-    if name == "cartpole" or name == "so100":
+    if load(name).upstream_status == "real-robot":
         pytest.importorskip("jaxterity")
 
     bundle = mock_build(load(name))
@@ -119,7 +119,7 @@ def test_entry_manifest_verifies(name: str) -> None:
 @pytest.mark.parametrize("name", EXPECTED_ENTRIES)
 def test_entry_propagates_target_profile_hash(name: str) -> None:
     """N8: ``bundle.manifest.target_profile_hash == config.target.hash``."""
-    if name == "cartpole" or name == "so100":
+    if load(name).upstream_status == "real-robot":
         pytest.importorskip("jaxterity")
 
     entry = load(name)

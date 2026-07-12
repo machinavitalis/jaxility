@@ -80,6 +80,19 @@ def test_cartpole_entry_has_dynamics_factory_and_options() -> None:
 
 
 @pytest.mark.unit
+def test_crazyflie_entry_has_dynamics_factory() -> None:
+    """Crazyflie ships a closed-form Newton-Euler factory (T-110)."""
+    pytest.importorskip("jaxterity")
+    from jaxility.zoo import load
+
+    entry = load("crazyflie")
+    assert entry.jax_dynamics_factory is not None
+    dynamics, state_shape, control_shape = entry.jax_dynamics_factory()
+    assert state_shape == (13,)
+    assert control_shape == (4,)
+
+
+@pytest.mark.unit
 def test_so100_entry_has_no_dynamics_factory() -> None:
     """SO-100 surfaces the MJX gap structurally — no factory."""
     pytest.importorskip("jaxterity")
@@ -94,7 +107,7 @@ def test_stub_entries_have_no_dynamics_factory() -> None:
     pytest.importorskip("jaxterity")
     from jaxility.zoo import load
 
-    for name in ("crazyflie", "berkeley_humanoid_lite"):
+    for name in ("berkeley_humanoid_lite",):
         assert load(name).jax_dynamics_factory is None
 
 
@@ -229,10 +242,11 @@ def test_cli_build_so100_returns_structured_no_factory_error(
 
 
 @pytest.mark.unit
-def test_cli_build_crazyflie_stub_still_reports_clearly(
+def test_cli_build_crazyflie_reports_template_not_wired(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Stub zoo entry surfaces the upstream-pending error."""
+    """Crazyflie's closed-form dynamics translate, but its OCP template is a
+    T-110 follow-on, so the build fails with a clear structured reason."""
     pytest.importorskip("jaxterity")
     exit_code = cli_main(["build", "crazyflie", "--target", "host"])
     captured = capsys.readouterr()
@@ -240,6 +254,7 @@ def test_cli_build_crazyflie_stub_still_reports_clearly(
     assert exit_code == 1
     report = json.loads(captured.out)
     assert report["ok"] is False
+    assert "not yet end-to-end buildable" in report["reason"]
 
 
 @pytest.mark.unit

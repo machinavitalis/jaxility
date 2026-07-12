@@ -56,13 +56,18 @@ degradation during contact phases, and upstream coordination cost.
 **Coverage row:** `lax.while_loop` (suggestion names MJX explicitly).
 **Workaround:** per-robot **closed-form** dynamics function. The
 zoo entries in `jaxility/zoo/` follow this contract: `cartpole` uses
-an analytical four-state model; `so100` does not register a JAX
-dynamics factory yet (MJX gap; CLI errors structurally).
-As of T-101 the cartpole model's scalars `(g, mc, mp, L)` are sourced
-from the calibrated Robot via `jaxterity.zoo.cartpole.reduced_params`
-(not hardcoded), so calibration propagates to the deployed binary even
+an analytical four-state model and `crazyflie` (T-110) a 13-state
+Newton-Euler floating-base model (both verified to match the MJX
+reference to ~ULP and to lower to CasADi); `so100` does not register a
+JAX dynamics factory yet (MJX gap; CLI errors structurally).
+As with cartpole's `(g, mc, mp, L)`, crazyflie's scalars `(m, I, g)`
+are sourced from the calibrated Robot (`_reduced_params`, not
+hardcoded), so calibration propagates to the deployed dynamics even
 though the *structure* is still the closed-form, not MJX. Joint
-damping/friction remain sim-only by design.
+damping/friction remain sim-only by design. Note the closed-form
+dynamics **lower**; the crazyflie *OCP template* (quaternion-aware
+tracking MPC) is a T-110 follow-on, so `jaxility build crazyflie` fails
+structurally until it lands.
 
 ### `lax.while_loop` for any reason
 

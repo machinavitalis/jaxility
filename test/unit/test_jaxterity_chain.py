@@ -328,3 +328,132 @@ def test_calibration_propagates_into_deployed_dynamics() -> None:
     dx_base = _cartpole_ode(pb)(state, control)
     dx_heavy = _cartpole_ode(ph)(state, control)
     assert float(jnp.max(jnp.abs(dx_heavy - dx_base))) > 1e-6
+
+
+# ---------------------------------------------------------------------------
+# T-110: Crazyflie closed-form quadrotor dynamics — a second robot end-to-end.
+# The deployed plant is a closed form (ADR-016), sourced from the calibrated
+# Robot. These prove it is (a) faithful to the MJX reference, (b) coupled to
+# calibration, and (c) inside the smooth-op subset (lowers to CasADi).
+# ---------------------------------------------------------------------------
+
+
+def _has_crazyflie_reference() -> bool:
+    try:
+        from jaxterity.zoo import crazyflie
+    except Exception:
+        return False
+    return hasattr(crazyflie, "thrust_dynamics")
+
+
+_needs_crazyflie = pytest.mark.skipif(
+    not _has_crazyflie_reference(),
+    reason="installed jaxterity predates the Crazyflie zoo entry "
+    "(no zoo.crazyflie.thrust_dynamics)",
+)
+
+
+@_needs_crazyflie
+@pytest.mark.unit
+def test_crazyflie_closed_form_matches_mjx_reference() -> None:
+    """The deployed closed form reproduces the MJX reference to ~ULP.
+
+    ADR-016 lowers a closed form, not MJX; this guards that the closed form is a
+    faithful stand-in for the real (MJX) dynamics of *this* robot, not merely a
+    plausible quadrotor — the faithfulness contract the Cartpole entry also meets.
+    """
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    jax.config.update("jax_enable_x64", True)
+    from jaxterity.zoo import crazyflie
+
+    from jaxility.zoo.crazyflie import _quadrotor_ode, _reduced_params
+
+    reference = crazyflie.thrust_dynamics()
+    closed_form = _quadrotor_ode(_reduced_params(crazyflie.load()))
+
+    rng = np.random.default_rng(0)
+    max_err = 0.0
+    for _ in range(64):
+        quat = rng.normal(size=4)
+        quat /= np.linalg.norm(quat)
+        state = jnp.asarray(
+            np.concatenate(
+                [
+                    rng.normal(size=3),
+                    quat,
+                    0.5 * rng.normal(size=3),
+                    2.0 * rng.normal(size=3),
+                ]
+            )
+        )
+        control = jnp.asarray(
+            np.concatenate(
+                [
+                    [crazyflie.hover_thrust() * (1.0 + 0.3 * rng.normal())],
+                    1e-4 * rng.normal(size=3),
+                ]
+            )
+        )
+        err = float(
+            jnp.max(jnp.abs(reference(state, control) - closed_form(state, control)))
+        )
+        max_err = max(max_err, err)
+    assert max_err < 1e-9, f"closed form drifts from MJX by {max_err:g}"
+
+
+@_needs_crazyflie
+@pytest.mark.unit
+def test_crazyflie_calibration_propagates_into_deployed_dynamics() -> None:
+    """Doubling the vehicle mass moves both the attestation handle and the
+    lowered closed-form dynamics — one model, one truth (T-110, mirrors T-101).
+    """
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update("jax_enable_x64", True)
+    from jaxterity.zoo import crazyflie
+
+    from jaxility.zoo.crazyflie import _quadrotor_ode, _reduced_params
+
+    base = crazyflie.load()
+    heavy = base.with_parameters({"cf2.mass": base.parameters()["cf2.mass"] * 2.0})
+
+    # Handle moves (the half that already worked).
+    assert base.attestation_handle != heavy.attestation_handle
+
+    pb, ph = _reduced_params(base), _reduced_params(heavy)
+    assert ph["m"] == pytest.approx(2.0 * pb["m"])
+    assert ph["I"] == pytest.approx(pb["I"])
+
+    # And the *deployed* closed form moves: at identity attitude (rest) a thrust
+    # of 2·(base weight) gives +g of vertical accel under the base mass but ~0
+    # under the doubled mass.
+    state = jnp.zeros(13).at[3].set(1.0)  # identity quaternion (w=1), at rest
+    control = jnp.asarray([2.0 * crazyflie.hover_thrust(), 0.0, 0.0, 0.0])
+    dx_base = _quadrotor_ode(pb)(state, control)
+    dx_heavy = _quadrotor_ode(ph)(state, control)
+    assert float(jnp.max(jnp.abs(dx_heavy - dx_base))) > 1e-6
+
+
+@_needs_crazyflie
+@pytest.mark.unit
+def test_crazyflie_closed_form_lowers_to_casadi() -> None:
+    """The closed form is inside the smooth-op subset acados consumes: it
+    translates to a CasADi function (no CoverageError), so Crazyflie is
+    end-to-end lowerable, not merely simulatable.
+    """
+    from jaxility.lowering import CasadiFunction, translate
+    from jaxility.zoo.crazyflie import _dynamics_factory
+
+    dynamics, state_shape, control_shape = _dynamics_factory()
+    casadi_fn = translate(
+        dynamics,
+        in_shapes=(state_shape, control_shape),
+        dtype="float64",
+        target_family="mock-cortex-a",
+        name="crazyflie",
+    )
+    assert isinstance(casadi_fn, CasadiFunction)
