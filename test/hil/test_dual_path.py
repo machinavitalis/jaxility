@@ -229,9 +229,12 @@ def dual_on_pi(tmp_path_factory: pytest.TempPathFactory):
     host = os.environ.get("JAXILITY_HIL_SSH_HOST")
     if not host:
         pytest.skip("JAXILITY_HIL_SSH_HOST not set; on-Pi dual-path tier skipped")
-    if subprocess.run(
-        ["ssh", *_SSH_OPTS, host, "true"], capture_output=True
-    ).returncode != 0:
+    if (
+        subprocess.run(
+            ["ssh", *_SSH_OPTS, host, "true"], capture_output=True
+        ).returncode
+        != 0
+    ):
         pytest.skip(f"HIL ssh host {host!r} not reachable")
     acados = os.environ.get("JAXILITY_HIL_ACADOS")
     if not acados:
@@ -241,9 +244,13 @@ def dual_on_pi(tmp_path_factory: pytest.TempPathFactory):
             text=True,
         )
         acados = probe.stdout.strip() if probe.returncode == 0 else ""
-    if not acados or subprocess.run(
-        ["ssh", *_SSH_OPTS, host, f"test -d {acados}/lib"], capture_output=True
-    ).returncode != 0:
+    if (
+        not acados
+        or subprocess.run(
+            ["ssh", *_SSH_OPTS, host, f"test -d {acados}/lib"], capture_output=True
+        ).returncode
+        != 0
+    ):
         pytest.skip(f"target acados install not found on {host}")
 
     policy = _make_policy()

@@ -133,9 +133,7 @@ def _supported_entry(
         dtype=dtype,  # type: ignore[arg-type]
         target_family=target_family,
         supported=True,
-        implementation_hint=(
-            f"mock pipeline: pass-through to source JAX at {dtype}."
-        ),
+        implementation_hint=(f"mock pipeline: pass-through to source JAX at {dtype}."),
         grade=grade,
         suggestion=(f"{op} is supported at {dtype} on {target_family}; no action."),
     )
