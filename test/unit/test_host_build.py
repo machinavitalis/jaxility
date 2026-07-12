@@ -248,14 +248,33 @@ def test_cli_build_unknown_zoo_returns_2(
 def test_cli_build_stub_zoo_entry_returns_1_with_structured_reason(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """``jaxility build crazyflie`` reports the stub-upstream gap clearly."""
+    """A stub entry (no dynamics factory) reports the upstream gap clearly."""
+    pytest.importorskip("jaxterity")
+    exit_code = cli_main(["build", "berkeley_humanoid_lite"])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    report = json.loads(captured.out)
+    assert report["ok"] is False
+    assert "stub" in report["reason"]
+
+
+@pytest.mark.unit
+def test_cli_build_crazyflie_reports_template_not_wired(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Crazyflie's dynamics translate, but the OCP template is a T-110 follow-on.
+
+    The build must fail *structurally* (PATTERNS §8.2) — a clear JSON reason —
+    rather than crash with an uncaught template error.
+    """
     pytest.importorskip("jaxterity")
     exit_code = cli_main(["build", "crazyflie"])
     captured = capsys.readouterr()
     assert exit_code == 1
     report = json.loads(captured.out)
     assert report["ok"] is False
-    assert "stub" in report["reason"]
+    assert "not yet end-to-end buildable" in report["reason"]
+    assert "template" in report["reason"]
 
 
 # The old "real-robot returns 1 + note" test is gone:

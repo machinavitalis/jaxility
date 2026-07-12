@@ -136,8 +136,29 @@ def run_build(
         )
         return 1
 
-    dynamics = translate(jax_fn, in_shapes=(state_shape, control_shape), name=zoo_name)
-    spec = _select_template_spec(entry, dynamics)
+    try:
+        dynamics = translate(
+            jax_fn, in_shapes=(state_shape, control_shape), name=zoo_name
+        )
+        spec = _select_template_spec(entry, dynamics)
+    except Exception as exc:
+        # The JAX dynamics may lower cleanly yet still not be end-to-end
+        # buildable — e.g. a zoo entry whose controller template is not wired
+        # yet (Crazyflie's quaternion-aware tracking MPC is a T-110 follow-on).
+        # Surface that as a structured report (PATTERNS §8.2), never an
+        # uncaught crash.
+        _emit(
+            {
+                "ok": False,
+                "reason": (
+                    f"zoo entry {zoo_name!r} is not yet end-to-end buildable: "
+                    f"{type(exc).__name__}: {exc}. The dynamics translate, but the "
+                    f"{entry.template!r} template is not wired for this entry — "
+                    "see the entry's remaining_work."
+                ),
+            }
+        )
+        return 1
 
     # Source attestation handle. Audit M-6 close: the previous version
     # silently swallowed every exception from ``source_factory()`` and
