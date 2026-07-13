@@ -28,6 +28,7 @@ from .builder_cross import (
     cross_build_for_target,
     execute_cross_compile,
     plan_cross_compile,
+    resolve_toolchain_integrity,
     verify_toolchain_installed,
     verify_toolchain_integrity,
 )
@@ -63,5 +64,6 @@ __all__ = [
     "plan_dep_build",
     "toolchain_file_for_target",
     "verify_toolchain_installed",
+    "resolve_toolchain_integrity",
     "verify_toolchain_integrity",
 ]

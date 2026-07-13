@@ -319,13 +319,23 @@ missing, and the C-library detection returns a self-explaining
 `library-unknown:<reason>` marker when the local source tree is
 absent — never a silent placeholder.
 
-### Arm GNU placeholder SHA-256
+### Arm GNU toolchain SHA-256 not yet pinned
 
-PI5 and all extended Arm toolchain pins carry `expected_sha256="0"*64`
-until the integrity check ships alongside the cross-toolchain install
-flow.
+PI5 and all extended Arm toolchain pins carry the `UNVERIFIED_SHA256`
+sentinel (`expected_sha256="unverified"`) — no real archive/binary hash
+is pinned yet, so toolchain-acquisition integrity is **not enforced**.
 
-**Tracked in:** PI5 docstring; extended-targets module docstring.
+What T-112 *did* close: the cross-build no longer silently implies the
+toolchain was checked. `cross_build_for_target` calls
+`resolve_toolchain_integrity`, which records
+`toolchain-integrity:<binary>` in the manifest as `"unverified"` (loud,
+not silent) and — the moment a real SHA-256 is pinned — verifies the
+installed binary and **hard-fails the build on a mismatch**. So the
+verified path is wired and enforced; what remains is pinning the actual
+hashes (host-specific per Arm release) for the shipped targets.
+
+**Tracked in:** `resolve_toolchain_integrity` / `verify_toolchain_integrity`
+(`jaxility.builder_cross`); PI5 + extended-targets pins.
 
 ### Apple clang version regex
 
