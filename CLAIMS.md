@@ -232,6 +232,14 @@ and unknown fields are an error.
   the local acados source tree is absent. Pinned upstreams are
   importable constants (`JAXILITY_ACADOS_TEMPLATE_PIN`,
   `JAXILITY_ACADOS_LIBRARY_PIN`).
+- **Cross-toolchain integrity status** (T-112). Every cross-build records
+  `toolchain-integrity:<binary>` in `Manifest.toolchain_versions` via
+  `resolve_toolchain_integrity`: `sha256:<hex>` when the pin carries a real
+  hash and the installed binary matches, or `"unverified"` when the pin is
+  the `UNVERIFIED_SHA256` sentinel. A pinned hash that does **not** match
+  the installed binary aborts the build (`ToolchainError`) — the attestation
+  never silently implies a toolchain check that did not happen. (No shipped
+  Arm pin carries a real hash yet — see `KNOWN_GAPS.md`.)
 - **Verification** (`jaxility verify`): cryptographically validates
   the chain end-to-end and surfaces the upstream Jaxterity attestation
   handle.

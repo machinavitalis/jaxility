@@ -28,6 +28,7 @@ from jaxility import (
     CrossCompilePlan,
     cflags_for_family,
     plan_cross_compile,
+    resolve_toolchain_integrity,
     verify_toolchain_installed,
     verify_toolchain_integrity,
 )
@@ -415,6 +416,76 @@ def test_verify_integrity_rejects_mismatching_sha(tmp_path: Path) -> None:
     try:
         with pytest.raises(ToolchainError, match="hashes to"):
             verify_toolchain_integrity(pinned_target)
+    finally:
+        os.environ["PATH"] = old_path
+
+
+# ---------------------------------------------------------------------------
+# T-112: resolve_toolchain_integrity — the build-path policy that carries the
+# integrity result into the manifest (record-honestly vs enforce).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_resolve_integrity_unverified_records_without_raising() -> None:
+    """An unverified pin (all shipped Arm pins today) does NOT abort the build;
+    it records ``"unverified"`` and returns a warning so the manifest is honest."""
+    status, warning = resolve_toolchain_integrity(PI5)
+    assert status == "unverified"
+    assert warning is not None
+    assert "NOT verified" in warning
+
+
+@pytest.mark.unit
+def test_resolve_integrity_pinned_match_records_sha(tmp_path: Path) -> None:
+    """A real pin that matches the installed binary records ``sha256:<hex>`` and
+    emits no warning."""
+    import hashlib
+
+    from jaxility.targets import ToolchainPin
+
+    fake_bin = tmp_path / "aarch64-none-linux-gnu-gcc"
+    fake_bin.write_bytes(b"#!/usr/bin/env bash\necho fake gcc 9.9.9\n")
+    fake_bin.chmod(fake_bin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    expected_sha = hashlib.sha256(fake_bin.read_bytes()).hexdigest()
+    pinned_target = PI5.model_copy(
+        update={
+            "toolchain": ToolchainPin(
+                **{**PI5.toolchain.model_dump(), "expected_sha256": expected_sha}
+            )
+        }
+    )
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{tmp_path}:{old_path}"
+    try:
+        status, warning = resolve_toolchain_integrity(pinned_target)
+    finally:
+        os.environ["PATH"] = old_path
+    assert status == f"sha256:{expected_sha}"
+    assert warning is None
+
+
+@pytest.mark.unit
+def test_resolve_integrity_pinned_mismatch_hard_fails(tmp_path: Path) -> None:
+    """A real pin whose binary does not match aborts the build (never ship an
+    artifact whose toolchain integrity we set out to check and could not confirm)."""
+    from jaxility.targets import ToolchainPin
+
+    fake_bin = tmp_path / "aarch64-none-linux-gnu-gcc"
+    fake_bin.write_bytes(b"tampered binary")
+    fake_bin.chmod(fake_bin.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    pinned_target = PI5.model_copy(
+        update={
+            "toolchain": ToolchainPin(
+                **{**PI5.toolchain.model_dump(), "expected_sha256": "a" * 64}
+            )
+        }
+    )
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{tmp_path}:{old_path}"
+    try:
+        with pytest.raises(ToolchainError, match="hashes to"):
+            resolve_toolchain_integrity(pinned_target)
     finally:
         os.environ["PATH"] = old_path
 

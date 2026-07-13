@@ -443,6 +443,38 @@ def verify_toolchain_integrity(target: Target) -> str:
     return captured
 
 
+def resolve_toolchain_integrity(target: Target) -> tuple[str, str | None]:
+    """Resolve the cross-toolchain integrity status for the manifest (T-112).
+
+    Wraps :func:`verify_toolchain_integrity` with the build-path policy:
+
+    * **Pinned integrity** (a real SHA-256): verify the installed binary. A
+      mismatch — or a missing binary — raises ``ToolchainError`` and aborts the
+      build. We never ship an artifact whose toolchain integrity we set out to
+      check and could not confirm.
+    * **Unverified sentinel** (:data:`~jaxility.targets.UNVERIFIED_SHA256`): the
+      integrity hash is not pinned yet. Rather than silently implying the
+      toolchain was verified, the build records ``"unverified"`` in the manifest
+      and continues — loud, not silent (invariant 7). Pin a real SHA-256
+      (PATTERNS §2.2) to promote this to enforcement.
+
+    Returns ``(manifest_status, warning)``: ``manifest_status`` is stored in the
+    manifest under ``toolchain-integrity:<binary>``; ``warning`` is a build-log
+    message, ``None`` when integrity was verified.
+    """
+    if target.toolchain.has_pinned_integrity():
+        sha = verify_toolchain_integrity(target)
+        return f"sha256:{sha}", None
+    return (
+        target.toolchain.expected_sha256,  # the "unverified" sentinel
+        (
+            f"toolchain integrity NOT verified for {target.toolchain.name!r}: the "
+            "pin carries the unverified sentinel. The manifest records this under "
+            "'toolchain-integrity'; pin a real SHA-256 (PATTERNS §2.2) to enforce it."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Execute
 # ---------------------------------------------------------------------------
@@ -621,6 +653,27 @@ def cross_build_for_target(
         )
     )
 
+    # T-112: verify (or honestly record non-verification of) the cross-toolchain
+    # binary integrity, and carry the result into the manifest so a verifier can
+    # tell whether provenance covers toolchain integrity. A real-pin mismatch
+    # raises inside ``resolve_toolchain_integrity`` and aborts the build here.
+    integrity_status, integrity_warning = resolve_toolchain_integrity(target)
+    log.append(
+        BuildLogEntry(
+            offset_us=1,
+            stage="verify",
+            level="warn" if integrity_warning else "info",
+            message=(
+                integrity_warning
+                or f"cross-toolchain {target.toolchain.name!r} integrity verified"
+            ),
+            detail={
+                "toolchain_binary": target.toolchain.name,
+                "toolchain_integrity": integrity_status,
+            },
+        )
+    )
+
     ocp = build_ocp(dynamics, spec)
     log.append(
         BuildLogEntry(
@@ -705,6 +758,12 @@ def cross_build_for_target(
     # time, so the manifest carries the actual binary's report rather
     # than only the pinned value.
     toolchain_versions[target.toolchain.name] = detected_version
+    # T-112: record whether the toolchain binary's integrity was verified
+    # ("sha256:<hex>") or not ("unverified"), so attestation never silently
+    # implies a check that did not happen.
+    toolchain_versions[f"toolchain-integrity:{target.toolchain.name}"] = (
+        integrity_status
+    )
     if deps is not None:
         # Record dependency-binary provenance: each cross-built archive's
         # BLAKE3 hash travels in the manifest so a verifier knows exactly
