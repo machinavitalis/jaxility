@@ -80,24 +80,41 @@ from .targets import Target
 # shared library. Per-deployment overrides (LTO, stack-protector, etc.)
 # layer on top via ``extra_cflags`` so this table stays close to a
 # single source of truth for "what does this family even mean."
-_FAMILY_CFLAGS: dict[str, tuple[str, ...]] = {
-    # ------------------------------------------------------------------
-    # A-profile (linux ABI; -fPIC -shared → .so)
-    # ------------------------------------------------------------------
-    # Pi 5. `-mcpu=cortex-a76` already pins the right `-march`
-    # (armv8.2-a) and ISA feature set; specifying `-march` explicitly
-    # alongside `-mcpu` triggers a "switch ... conflicts with ..."
-    # error in Arm GNU 15.2.Rel1 (cc1 enforces the constraint that
-    # newer releases tightened).
-    "cortex-a76": (
-        "-mcpu=cortex-a76",
+
+
+def _a_profile_cflags(mcpu: str) -> tuple[str, ...]:
+    """A-profile (aarch64 Linux ABI) cross-compile flags: a tuned,
+    position-independent shared object for the given ``-mcpu``.
+
+    ``-mcpu=<core>`` already pins the right ``-march`` and ISA feature set;
+    specifying ``-march`` explicitly alongside ``-mcpu`` triggers a
+    "switch ... conflicts with ..." error in Arm GNU 15.2.Rel1 (cc1 enforces
+    the constraint newer releases tightened), so we deliberately do not.
+    """
+    return (
+        f"-mcpu={mcpu}",
         "-O3",
         "-fPIC",
         "-shared",
         "-Wall",
         "-Wextra",
         "-Wno-unused-parameter",  # acados-generated C trips this prolifically
-    ),
+    )
+
+
+_FAMILY_CFLAGS: dict[str, tuple[str, ...]] = {
+    # ------------------------------------------------------------------
+    # A-profile (linux ABI; -fPIC -shared → .so). All share the
+    # aarch64-none-linux-gnu toolchain; ``-mcpu`` is the only knob that
+    # differs per SoC. Qualcomm IQ10's MPC codegen targets its A78-class
+    # application host (the Hexagon NPU is a separate, NPU-only lane).
+    # ------------------------------------------------------------------
+    "cortex-a76": _a_profile_cflags("cortex-a76"),  # Raspberry Pi 5
+    "cortex-a55": _a_profile_cflags("cortex-a55"),
+    "cortex-a78": _a_profile_cflags("cortex-a78"),
+    "cortex-a710": _a_profile_cflags("cortex-a710"),
+    "neoverse-n1": _a_profile_cflags("neoverse-n1"),
+    "qualcomm-iq10": _a_profile_cflags("cortex-a78"),
     # ------------------------------------------------------------------
     # M-profile (bare-metal; -c → relocatable .o; no -shared / -fPIC).
     # Linker scripts, startup files, and reset vectors are the runtime's

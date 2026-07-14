@@ -38,7 +38,27 @@ from jaxility.builder_cross import (
     execute_cross_compile,
 )
 from jaxility.errors import TargetError, ToolchainError
-from jaxility.targets import MOCK_CORTEX_A, MOCK_CORTEX_M, PI5
+from jaxility.targets import (
+    CORTEX_A55,
+    CORTEX_A78,
+    CORTEX_A710,
+    MOCK_CORTEX_A,
+    MOCK_CORTEX_M,
+    NEOVERSE_N1,
+    PI5,
+    QUALCOMM_IQ10,
+)
+
+# T-114: the aarch64-linux A-profile SoCs that share the Pi 5 toolchain and
+# lane. Each maps to a valid Arm GNU ``-mcpu``; Qualcomm IQ10's MPC codegen
+# targets its A78-class application host.
+_AARCH64_SIBLINGS = [
+    (CORTEX_A55, "cortex-a55"),
+    (CORTEX_A78, "cortex-a78"),
+    (CORTEX_A710, "cortex-a710"),
+    (NEOVERSE_N1, "neoverse-n1"),
+    (QUALCOMM_IQ10, "cortex-a78"),
+]
 
 # ---------------------------------------------------------------------------
 # Per-family flag table
@@ -64,6 +84,69 @@ def test_cflags_cortex_a76_pins_isa_and_tune() -> None:
     assert "-O3" in flags
     assert "-fPIC" in flags
     assert "-shared" in flags
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("target,expected_mcpu", _AARCH64_SIBLINGS)
+def test_cflags_aarch64_siblings_pin_isa_and_share_the_lane(
+    target, expected_mcpu
+) -> None:
+    """T-114: the aarch64-linux siblings each resolve to A-profile flags with
+    the right ``-mcpu`` and the same shared-object shape as the Pi 5."""
+    flags = cflags_for_family(target.family)
+    assert f"-mcpu={expected_mcpu}" in flags
+    assert not any(f.startswith("-march=") for f in flags)
+    assert "-fPIC" in flags
+    assert "-shared" in flags
+    # Same toolchain as the Pi 5 — they are one cross-compile lane.
+    assert target.toolchain.name == PI5.toolchain.name
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("target,expected_mcpu", _AARCH64_SIBLINGS)
+def test_plan_cross_compile_aarch64_siblings(target, expected_mcpu, tmp_path) -> None:
+    """The plan layer composes a deterministic argv for each sibling — this
+    runs everywhere (no toolchain needed), unlike the real-compile Tier-B test."""
+    src_dir = tmp_path / "c_generated_code" / "demo"
+    src_dir.mkdir(parents=True)
+    (src_dir / "demo_step.c").write_text("int demo_step(int x){return x+1;}\n")
+    plan = plan_cross_compile(
+        target=target,
+        c_source_dir=tmp_path / "c_generated_code",
+        output_path=tmp_path / f"lib{target.family}_demo.so",
+        model_name="demo",
+    )
+    assert plan.compiler_argv[0] == "aarch64-none-linux-gnu-gcc"
+    assert f"-mcpu={expected_mcpu}" in plan.compiler_argv
+    assert "-shared" in plan.compiler_argv
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("target,expected_mcpu", _AARCH64_SIBLINGS)
+@pytest.mark.skipif(
+    shutil.which("aarch64-none-linux-gnu-gcc") is None,
+    reason=(
+        "aarch64-none-linux-gnu-gcc not on PATH; aarch64 Tier-B runs in CI "
+        "(Linux x86_64 runners install Arm GNU 15.2.Rel1)"
+    ),
+)
+def test_real_aarch64_compile_siblings(target, expected_mcpu, tmp_path: Path) -> None:
+    """Tier B — a real ELF shared object compiles for each aarch64 sibling."""
+    src_dir = tmp_path / "c_generated_code" / "demo"
+    src_dir.mkdir(parents=True)
+    (src_dir / "demo_step.c").write_text(
+        "#include <stdint.h>\nint32_t demo_step(int32_t x){return x*2+1;}\n"
+    )
+    out = tmp_path / f"lib{target.family}_demo.so"
+    plan = plan_cross_compile(
+        target=target,
+        c_source_dir=tmp_path / "c_generated_code",
+        output_path=out,
+        model_name="demo",
+    )
+    result = execute_cross_compile(plan)
+    assert result == out
+    assert out.read_bytes().startswith(b"\x7fELF")
 
 
 @pytest.mark.unit

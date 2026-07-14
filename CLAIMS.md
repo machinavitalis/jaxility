@@ -105,15 +105,17 @@ recursive algorithm vs MuJoCo's `cinert` CRB (see `KNOWN_GAPS.md`).
   - **Cortex-M lane (`arm-none-eabi-gcc 15.2.1`)** runs locally and
     in CI. End-to-end test compiles a hand-rolled C source to a
     Cortex-M4 ELF `.o`.
-  - **Pi 5 lane (`aarch64-none-linux-gnu-gcc 15.2.1`)** runs in CI
+  - **aarch64-linux lane (`aarch64-none-linux-gnu-gcc 15.2.1`)** runs in CI
     (Linux x86_64 runners install the archive; cached per release).
-    End-to-end test compiles a hand-rolled C source to a Cortex-A76
-    ELF `.so`. On Apple Silicon dev hosts the test skips locally —
-    Arm does not ship a darwin-arm64 host build of this chain in
-    15.2.Rel1.
-  - `_FAMILY_CFLAGS` carries rows for `cortex-a76` (A-profile,
-    `-shared -fPIC` → `.so`) and `cortex-m4`, `ethos-u55`, `ethos-u65`
-    (M-profile, `-c` → relocatable `.o`).
+    End-to-end tests compile a hand-rolled C source to an ELF `.so`
+    per SoC. On Apple Silicon dev hosts the tests skip locally — Arm
+    does not ship a darwin-arm64 host build of this chain in 15.2.Rel1.
+  - `_FAMILY_CFLAGS` carries A-profile rows (`-shared -fPIC` → `.so`) for
+    the whole aarch64-linux lane — `cortex-a76` (Pi 5), `cortex-a55`,
+    `cortex-a78`, `cortex-a710`, `neoverse-n1`, and `qualcomm-iq10` (T-114;
+    its MPC codegen targets the A78-class host) — all sharing one toolchain
+    and differing only by `-mcpu`; plus M-profile rows (`-c` → relocatable
+    `.o`) for `cortex-m4`, `ethos-u55`, `ethos-u65`.
 - **Dependency cross-build orchestrator** (T-031 follow-up, ADR-018,
   `jaxility.builder_deps`): cross-builds the acados / blasfeo / hpipm
   static archives **from source** for an Arm target — never vendored

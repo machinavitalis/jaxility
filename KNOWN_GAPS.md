@@ -299,17 +299,21 @@ dynamically with no static-libc workaround needed.
 
 ### Extended target families in `_FAMILY_CFLAGS`
 
-The extended target *profiles* (Cortex-A55, A78, A710, N1, M4,
-Ethos-U55/U65, Qualcomm IQ10, Apple Silicon) all carry pinned
-toolchains and capability flags. The cross-compile
-`_FAMILY_CFLAGS` table currently has only `cortex-a76`; calling
-`plan_cross_compile` for one of these families raises
-`TargetError("no cross-compile cflags registered for target family ...")`
-naming the table to extend.
+The whole **aarch64-linux lane now cross-compiles** (T-114): `_FAMILY_CFLAGS`
+carries A-profile rows for `cortex-a76`, `cortex-a55`, `cortex-a78`,
+`cortex-a710`, `neoverse-n1`, and `qualcomm-iq10` — they share one toolchain
+and differ only by `-mcpu`, each with a real ELF `.so` Tier-B compile test.
 
-**Workaround:** add a row to `jaxility.builder_cross._FAMILY_CFLAGS`
-alongside the per-family deployment PR (loud-fail keeps this from
-shipping by accident).
+**Still missing** `_FAMILY_CFLAGS` cross-compile rows:
+- **Apple Silicon** (`apple-silicon`) — cross-Apple-Silicon dispatch needs the
+  Universal2 / clang refinement noted under "Apple clang version regex".
+- **Bare-metal Cortex-M beyond `cortex-m4`** and the **NPU codegen** families
+  (Ethos-U, Hexagon) are separate lanes, not a missing cflags row — see the
+  Cortex-M (T-052) and NPU-codegen gaps.
+
+Calling `plan_cross_compile` for a family without a row still raises
+`TargetError("no cross-compile cflags registered for target family ...")`
+naming the table to extend (loud-fail keeps it from shipping by accident).
 
 ---
 
