@@ -142,24 +142,50 @@ def _register(name: str) -> Callable[[PrimitiveHandler], PrimitiveHandler]:
 
 
 # Arithmetic.
+def _bcast(ca: Any, a: Any, b: Any) -> tuple[Any, Any]:
+    """Reconcile two operands for an element-wise op, mirroring JAX/numpy
+    broadcasting. CasADi lifts Python/1×1 scalars implicitly, so only a
+    non-scalar shape mismatch — e.g. a ``(k, 1)`` column against a ``(1, k)``
+    row, as an outer product ``u[:, None] * u[None, :]`` produces — is
+    ``repmat``'d to the common shape. Numpy constants are lifted to ``DM``."""
+    if isinstance(a, np.ndarray):
+        a = ca.DM(a)
+    if isinstance(b, np.ndarray):
+        b = ca.DM(b)
+    ash = (a.size1(), a.size2()) if hasattr(a, "size1") else (1, 1)
+    bsh = (b.size1(), b.size2()) if hasattr(b, "size1") else (1, 1)
+    if ash == (1, 1) or bsh == (1, 1) or ash == bsh:
+        return a, b  # native scalar broadcast, or already aligned
+    rows, cols = max(ash[0], bsh[0]), max(ash[1], bsh[1])
+    if ash != (rows, cols):
+        a = ca.repmat(a, rows // ash[0], cols // ash[1])
+    if bsh != (rows, cols):
+        b = ca.repmat(b, rows // bsh[0], cols // bsh[1])
+    return a, b
+
+
 @_register("add")
 def _add(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
-    return [xs[0] + xs[1]]
+    a, b = _bcast(ca, xs[0], xs[1])
+    return [a + b]
 
 
 @_register("sub")
 def _sub(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
-    return [xs[0] - xs[1]]
+    a, b = _bcast(ca, xs[0], xs[1])
+    return [a - b]
 
 
 @_register("mul")
 def _mul(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
-    return [xs[0] * xs[1]]
+    a, b = _bcast(ca, xs[0], xs[1])
+    return [a * b]
 
 
 @_register("div")
 def _div(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
-    return [xs[0] / xs[1]]
+    a, b = _bcast(ca, xs[0], xs[1])
+    return [a / b]
 
 
 @_register("neg")
@@ -216,13 +242,58 @@ def _sqrt(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
 # Shape ops.
 @_register("broadcast_in_dim")
 def _broadcast_in_dim(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
-    # ``broadcast_in_dim`` adds singleton dims and broadcasts. For the
-    # smooth-op surface (used by canonical dynamics) the only
-    # patterns we see are scalar → (1,) and scalar → (N,). CasADi
-    # broadcasts scalars implicitly under +/-/*//, so passing the value
-    # through preserves numerical output. Shape consistency is enforced
-    # downstream by ``concatenate`` and the output-shape recovery.
-    return [xs[0]]
+    # ``broadcast_in_dim`` adds singleton dims and broadcasts. Two families
+    # occur on the smooth-op surface:
+    #
+    #  * scalar → (1,) / (N,): CasADi broadcasts scalars implicitly under
+    #    +/-/*//, so passing the value through preserves numerical output.
+    #  * rank-1 → rank-2: promoting a length-k vector to a row (1, k) or a
+    #    column (k, 1). This is how ``jnp.stack``/``jnp.array`` build a matrix
+    #    from vectors (e.g. a ``skew`` cross-product matrix in rigid-body
+    #    dynamics). CasADi stores a rank-1 value as a k×1 *column*, so a target
+    #    row (broadcast_dimensions=(1,)) is the transpose; a column
+    #    (broadcast_dimensions=(0,)) passes through. Tiling handles a genuine
+    #    size-1 broadcast along the other axis.
+    x = ca.DM(xs[0]) if isinstance(xs[0], np.ndarray) else xs[0]
+    out_shape = tuple(params["shape"])
+    bdims = tuple(params["broadcast_dimensions"])
+
+    # Scalar source (rank 0): materialize to the target shape. CasADi broadcasts
+    # a scalar implicitly under element-wise ops, but a scalar fed into a matmul
+    # (``dot_general``) is taken as a scalar multiply — so a ``scalar → (N,)``
+    # broadcast that later hits ``@`` must be a real N×1 column, not a 1×1.
+    if len(bdims) == 0:
+        if len(out_shape) == 0 or out_shape in ((1,), (1, 1)):
+            return [x]
+        rows = out_shape[0]
+        cols = out_shape[1] if len(out_shape) == 2 else 1
+        return [ca.repmat(x, rows, cols)]
+
+    # Rank-preserving (identity) broadcast → pass through.
+    if len(out_shape) <= 1:
+        return [x]
+
+    if len(out_shape) == 2:
+        rows, cols = out_shape
+        if bdims == (0,):
+            # Vector indexes the rows → column (k×1), tiled across `cols`.
+            return [x if cols == 1 else ca.repmat(x, 1, cols)]
+        if bdims == (1,):
+            # Vector indexes the columns → row (1×k), tiled across `rows`.
+            row = x.T
+            return [row if rows == 1 else ca.repmat(row, rows, 1)]
+
+    raise CoverageError(
+        f"broadcast_in_dim to shape {out_shape} with broadcast_dimensions "
+        f"{bdims} is not supported",
+        op=f"broadcast_in_dim[{out_shape}]",
+        dtype="float64",
+        target_family="host",
+        suggestion=(
+            "the lowering supports scalar broadcasts and rank-1 → rank-2 "
+            "row/column promotion; rank-3+ broadcasts need a real tensor type."
+        ),
+    )
 
 
 @_register("squeeze")
@@ -313,10 +384,22 @@ def _dot_general(ca: Any, xs: list[Any], params: dict[str, Any]) -> list[Any]:
                 "inner product; batched matmul lands with a tensor type."
             ),
         )
-    # 2D × 2D matmul: contracting = ([1], [0])
-    # 1D × 1D inner product: contracting = ([0], [0])
-    # 1D × 2D or 2D × 1D: contracting = ([0], [0]) / ([1], [0])
-    return [xs[0] @ xs[1]]
+    # CasADi stores every value as a 2D matrix (a JAX rank-1 ``(k,)`` is a
+    # k×1 column). Constant operands arrive as numpy arrays and must be lifted
+    # to CasADi ``DM`` before ``@`` — numpy's ``__matmul__`` does not defer to
+    # CasADi. The left operand's contracting axis then selects the product:
+    #
+    #   * left contracts axis 1 (``([1], [0])``): standard matmul — 2D×2D or a
+    #     matrix·vector (6×6 @ 6×1 → 6×1).
+    #   * left contracts axis 0 (``([0], [0])``): the left operand is contracted
+    #     on its leading axis — a 1D·1D inner product or vector·matrix. In
+    #     CasADi's column convention that is ``aᵀ @ b`` (1×k @ k×n).
+    left_contract = tuple(contracting[0])
+    a = ca.DM(xs[0]) if isinstance(xs[0], np.ndarray) else xs[0]
+    b = ca.DM(xs[1]) if isinstance(xs[1], np.ndarray) else xs[1]
+    if left_contract == (0,):
+        return [a.T @ b]
+    return [a @ b]
 
 
 # Indexing.

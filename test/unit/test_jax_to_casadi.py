@@ -306,3 +306,75 @@ def test_polynomial_translation_property(coeffs: list[float], x: float) -> None:
     jax_out = float(fn(jnp.asarray(x_arr)).item())
     ca_out = float(cf(x_arr)[0].item())
     np.testing.assert_allclose(jax_out, ca_out, atol=1e-14, rtol=1e-14)
+
+
+# ---------------------------------------------------------------------------
+# T-111: matrix/vector construction the lowering must support for rigid-body
+# (articulated-body) dynamics — 2D matrices built from vectors, 1D·1D inner
+# products, outer products, and scalar → vector broadcasts feeding a matmul.
+# Each asserts the lowered CasADi matches the JAX source numerically.
+# ---------------------------------------------------------------------------
+
+
+def _lowered_matches(fn, in_shapes, seed=0) -> float:
+    cf = translate(
+        fn,
+        in_shapes=in_shapes,
+        dtype="float64",
+        target_family="mock-cortex-a",
+        name="cap",
+    )
+    assert isinstance(cf, CasadiFunction)
+    rng = np.random.default_rng(seed)
+    err = 0.0
+    for _ in range(20):
+        xs = [rng.standard_normal(s[0]) for s in in_shapes]
+        got = np.asarray(cf(*xs)).ravel()
+        exp = np.asarray(fn(*[jnp.asarray(x) for x in xs])).ravel()
+        err = max(err, float(np.max(np.abs(got - exp))))
+    return err
+
+
+@pytest.mark.unit
+def test_lowering_inner_product() -> None:
+    """A 1D·1D inner product lowers to a scalar (``aᵀ @ b``)."""
+    assert _lowered_matches(lambda x: x[:3] @ x[3:6], ((6,),)) < 1e-12
+
+
+@pytest.mark.unit
+def test_lowering_skew_matrix_from_scalars() -> None:
+    """A 3×3 built from vector components (a cross-product / ``skew`` matrix)
+    lowers and applies as a matrix — the row-promotion broadcast."""
+
+    def skew_apply(x):
+        v, w = x[:3], x[3:6]
+        skew = jnp.array(
+            [
+                [v[0] * 0.0, -v[2], v[1]],
+                [v[2], v[0] * 0.0, -v[0]],
+                [-v[1], v[0], v[0] * 0.0],
+            ]
+        )
+        return skew @ w
+
+    assert _lowered_matches(skew_apply, ((6,),)) < 1e-12
+
+
+@pytest.mark.unit
+def test_lowering_outer_product() -> None:
+    """An outer product ``u[:, None] * u[None, :]`` (a (k,1)·(1,k) broadcast
+    mul) lowers to the full matrix, then contracts back to a vector."""
+    assert _lowered_matches(lambda x: jnp.outer(x[:4], x[:4]) @ x[:4], ((4,),)) < 1e-12
+
+
+@pytest.mark.unit
+def test_lowering_scalar_broadcast_into_matmul() -> None:
+    """A scalar broadcast to a vector that then feeds a matmul is materialized
+    as a real column (not a scalar-multiply)."""
+
+    def f(x):
+        vec = x[0] * jnp.ones(3)  # scalar → (3,)
+        mat = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+        return mat @ vec
+
+    assert _lowered_matches(f, ((3,),)) < 1e-12
