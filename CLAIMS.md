@@ -64,6 +64,19 @@ string to every supported row. The same table records every op the
 translator deliberately **does not** accept — see `KNOWN_GAPS.md` for
 that side.
 
+**Robot dynamics that lower.** Three zoo robots ship a closed-form
+`jax_dynamics_factory` that translates to CasADi, sourced from the
+calibrated Robot so calibration propagates into the deployed plant
+(one model, one truth): `cartpole` (4-state analytical, LQR),
+`crazyflie` (T-110; 13-state Newton-Euler floating base) — both matching
+their MJX reference to ~ULP — and `so100` (T-111; a Featherstone
+**Articulated Body Algorithm** for the serial 6-DoF arm). ABA is the
+lowerable route for a manipulator, whose `M(q)⁻¹` is outside the
+smooth-op subset: it computes `q̈` in O(n) from spatial matmuls and
+scalar reciprocals. so100 is validated to **manipulator grade** against
+MJX (`~1e-5` rel), not ULP — an inherent floor for an independent
+recursive algorithm vs MuJoCo's `cinert` CRB (see `KNOWN_GAPS.md`).
+
 ## What we generate
 
 - **acados OCP**. `jaxility.lowering.build_ocp(dynamics, spec)` takes

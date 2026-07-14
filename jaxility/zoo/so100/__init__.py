@@ -15,24 +15,46 @@ from ...testing import JaxteritySource, Source
 from .. import ZooDeploymentConfig
 
 
-def _source() -> Source:
+def _load_robot():
+    """Load the upstream Jaxterity SO-100 / SO-101 Robot (serial 6-DoF arm).
+
+    The *same* deterministic robot anchors both the attestation handle
+    (:func:`_source`) and the lowered dynamics' spatial tree
+    (:func:`_dynamics_factory`) — one model, one truth.
+    """
     from jaxterity.zoo import load
 
-    robot = load("so100")
+    return load("so100")
+
+
+def _source() -> Source:
     # Zoo robots currently arrive UNCALIBRATED; SKILL.md advertises the
     # production compiler will refuse uncalibrated robots. A later change
     # tightens this — bump to ``require_calibration_state="CALIBRATED"``
     # once the sysid recipe lands.
-    return JaxteritySource.from_robot(robot, dim=6, require_calibration_state=None)
+    return JaxteritySource.from_robot(
+        _load_robot(), dim=6, require_calibration_state=None
+    )
 
 
-# Note: no ``_dynamics_factory`` for SO-100 yet. The
-# manipulator dynamics live inside Jaxterity / MJX and use scatter /
-# gather primitives outside the T-020 smooth-op subset; no analytical
-# 6-DOF replacement is bundled. The CLI surfaces this with a clear
-# "no jax_dynamics_factory" message. A later change either lands
-# the MJX → CasADi pass (smoothed scatter handlers) or bundles an
-# analytical SO-100 dynamics shim.
+def _dynamics_factory():
+    """Closed-form manipulator dynamics (Featherstone ABA) for SO-100.
+
+    Unlike the flyers' explicit closed form, a manipulator needs ``M(q)⁻¹`` —
+    absent from the smooth-op subset — so the deployed plant is the O(n)
+    articulated-body recursion (:mod:`._dynamics`), which lowers to CasADi
+    using only spatial matmuls and scalar reciprocals. The spatial tree
+    (transforms, axes, per-link mass/com/inertia) is read from the calibrated
+    Robot, so a recalibration propagates into the lowered binary.
+
+    Returns ``(f, state_shape, control_shape)`` with ``state = [q(6), q̇(6)]``
+    and ``control = τ(6)``.
+    """
+    from ._dynamics import manipulator_ode, spatial_tree
+
+    robot = _load_robot()
+    f, n = manipulator_ode(spatial_tree(robot), float(robot.gravity))
+    return f, (2 * n,), (n,)
 
 
 def config() -> ZooDeploymentConfig:
@@ -51,13 +73,10 @@ def config() -> ZooDeploymentConfig:
         license="MIT (Jaxterity zoo + Jaxility zoo entry).",
         upstream_status="real-robot",
         remaining_work=(
-            "Replace the synthetic simulate with MJX-driven "
-            "trajectory via robot.to_diagram() (T-026).",
-            "Land the WBC template + Jaxterity Task DSL consumer (T-024).",
+            "Wire the WBC OCP template for the 12-state manipulator (T-024); "
+            "until then `jaxility build so100` reports 'template not wired'.",
+            "Land the Jaxterity Task DSL consumer (T-024).",
             "Bring up a real-target lane (post-launch — T-070).",
         ),
-        # ``jax_dynamics_factory=None`` (the default). MJX gap surfaces
-        # in the CLI as a "no dynamics factory" structured error; the
-        # Python API (``build_for_target``) still works for any caller
-        # who hand-rolls SO-100 dynamics in the smooth-op subset.
+        jax_dynamics_factory=_dynamics_factory,
     )

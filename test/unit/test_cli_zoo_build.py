@@ -93,13 +93,16 @@ def test_crazyflie_entry_has_dynamics_factory() -> None:
 
 
 @pytest.mark.unit
-def test_so100_entry_has_no_dynamics_factory() -> None:
-    """SO-100 surfaces the MJX gap structurally — no factory."""
+def test_so100_entry_has_dynamics_factory() -> None:
+    """SO-100 ships a closed-form articulated-body factory (T-111)."""
     pytest.importorskip("jaxterity")
     from jaxility.zoo import load
 
     entry = load("so100")
-    assert entry.jax_dynamics_factory is None
+    assert entry.jax_dynamics_factory is not None
+    dynamics, state_shape, control_shape = entry.jax_dynamics_factory()
+    assert state_shape == (12,)  # [q(6), q̇(6)]
+    assert control_shape == (6,)
 
 
 @pytest.mark.unit
@@ -227,10 +230,11 @@ def test_cli_build_surfaces_failing_jax_dynamics_factory(
 
 
 @pytest.mark.unit
-def test_cli_build_so100_returns_structured_no_factory_error(
+def test_cli_build_so100_reports_template_not_wired(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """SO-100 has no dynamics factory; CLI surfaces the gap clearly."""
+    """SO-100's ABA dynamics translate, but the WBC OCP template is a T-024
+    follow-on, so the build fails with a clear structured reason."""
     pytest.importorskip("jaxterity")
     exit_code = cli_main(["build", "so100", "--target", "host"])
     captured = capsys.readouterr()
@@ -238,7 +242,7 @@ def test_cli_build_so100_returns_structured_no_factory_error(
     assert exit_code == 1
     report = json.loads(captured.out)
     assert report["ok"] is False
-    assert "jax_dynamics_factory" in report["reason"]
+    assert "not yet end-to-end buildable" in report["reason"]
 
 
 @pytest.mark.unit

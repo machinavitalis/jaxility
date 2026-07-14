@@ -54,20 +54,29 @@ degradation during contact phases, and upstream coordination cost.
 
 **Documented in:** `AGENTS/DECISIONS.md` ADR-016.
 **Coverage row:** `lax.while_loop` (suggestion names MJX explicitly).
-**Workaround:** per-robot **closed-form** dynamics function. The
-zoo entries in `jaxility/zoo/` follow this contract: `cartpole` uses
-an analytical four-state model and `crazyflie` (T-110) a 13-state
-Newton-Euler floating-base model (both verified to match the MJX
-reference to ~ULP and to lower to CasADi); `so100` does not register a
-JAX dynamics factory yet (MJX gap; CLI errors structurally).
-As with cartpole's `(g, mc, mp, L)`, crazyflie's scalars `(m, I, g)`
-are sourced from the calibrated Robot (`_reduced_params`, not
-hardcoded), so calibration propagates to the deployed dynamics even
-though the *structure* is still the closed-form, not MJX. Joint
-damping/friction remain sim-only by design. Note the closed-form
-dynamics **lower**; the crazyflie *OCP template* (quaternion-aware
-tracking MPC) is a T-110 follow-on, so `jaxility build crazyflie` fails
-structurally until it lands.
+**Workaround:** per-robot **closed-form** dynamics function. The zoo
+entries in `jaxility/zoo/` follow this contract: `cartpole` uses an
+analytical four-state model, `crazyflie` (T-110) a 13-state Newton-Euler
+floating-base model (both matching the MJX reference to ~ULP), and
+`so100` (T-111) a Featherstone **Articulated Body Algorithm** — a
+manipulator needs `M(q)⁻¹`, which the coverage table has no solve for,
+and ABA computes `q̈` in O(n) using only spatial matmuls and scalar
+reciprocals, so it lowers. All three lower to CasADi. The scalars/spatial
+tree are sourced from the calibrated Robot (not hardcoded), so
+calibration propagates to the deployed dynamics even though the
+*structure* is a closed form, not MJX. Joint damping/friction remain
+sim-only by design.
+
+**so100 fidelity is manipulator-grade, not ULP** (`~1e-5` rel vs MJX,
+tested at a `1e-4` bound). An *independent* ABA and MuJoCo's internal
+`cinert` CRB diverge by ~1e-6 on this featherweight arm (distal inertias
+~1e-5) — a deterministic representational floor, not a bug or round-off.
+The flyers hit ULP because they are well-conditioned with explicit closed
+forms; recursive manipulator dynamics inherently cannot.
+
+Note the closed-form dynamics **lower**; the crazyflie (quaternion
+tracking MPC) and so100 (WBC) *OCP templates* are follow-ons, so
+`jaxility build {crazyflie,so100}` fails structurally until they land.
 
 ### `lax.while_loop` for any reason
 

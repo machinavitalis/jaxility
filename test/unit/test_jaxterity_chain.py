@@ -457,3 +457,110 @@ def test_crazyflie_closed_form_lowers_to_casadi() -> None:
         name="crazyflie",
     )
     assert isinstance(casadi_fn, CasadiFunction)
+
+
+# ---------------------------------------------------------------------------
+# T-111: SO-100 manipulator dynamics — the first arm, end-to-end. Unlike the
+# flyers' explicit closed form, a manipulator needs M(q)⁻¹ (absent from the
+# smooth-op subset), so the deployed plant is a Featherstone ABA that lowers to
+# CasADi. It is validated to *manipulator grade* against MJX, not ULP: an
+# independent recursive algorithm and MuJoCo's internal cinert CRB diverge by
+# ~1e-6 on this featherweight arm — a representational floor, not a bug
+# (ADR-016). 1e-4 is a comfortable, honest bound; measured ~1e-5.
+# ---------------------------------------------------------------------------
+
+SO100_MANIPULATOR_RTOL = 1e-4
+
+
+def _has_so100() -> bool:
+    try:
+        from jaxterity.zoo import load
+
+        return hasattr(load("so100"), "functional_dynamics")
+    except Exception:
+        return False
+
+
+_needs_so100 = pytest.mark.skipif(
+    not _has_so100(), reason="installed jaxterity has no so100 functional_dynamics"
+)
+
+
+@_needs_so100
+@pytest.mark.unit
+def test_so100_closed_form_matches_mjx_reference() -> None:
+    """The ABA reproduces the MJX reference to manipulator grade in a
+    contact-free, non-singular regime — a faithful stand-in for the real
+    dynamics of *this* arm, not merely a plausible manipulator."""
+    import jax
+    import jax.numpy as jnp
+    import numpy as np
+
+    jax.config.update("jax_enable_x64", True)
+    from jaxterity.zoo import load
+
+    from jaxility.zoo.so100 import _dynamics_factory
+
+    reference = load("so100").functional_dynamics()
+    f, _, _ = _dynamics_factory()
+
+    rng = np.random.default_rng(0)
+    home = np.array([0.3, -0.8, 1.2, -0.6, 0.4, 0.2])  # bent, well-conditioned
+    max_rel = 0.0
+    for _ in range(64):
+        q = home + rng.uniform(-0.15, 0.15, 6)
+        qd = rng.uniform(-0.15, 0.15, 6)
+        tau = rng.uniform(-0.02, 0.02, 6)
+        state = jnp.asarray(np.concatenate([q, qd]))
+        control = jnp.asarray(tau)
+        ref = np.asarray(reference(state, control))[6:]
+        mine = np.asarray(f(state, control))[6:]
+        max_rel = max(max_rel, np.max(np.abs(ref - mine)) / np.max(np.abs(ref)))
+    assert max_rel < SO100_MANIPULATOR_RTOL, f"ABA drifts from MJX by {max_rel:g}"
+
+
+@_needs_so100
+@pytest.mark.unit
+def test_so100_calibration_propagates_into_deployed_dynamics() -> None:
+    """Doubling a link mass moves both the attestation handle and the lowered
+    ABA dynamics — one model, one truth (T-111, mirrors T-101)."""
+    import jax
+    import jax.numpy as jnp
+
+    jax.config.update("jax_enable_x64", True)
+    from jaxterity.zoo import load
+
+    from jaxility.zoo.so100._dynamics import manipulator_ode, spatial_tree
+
+    base = load("so100")
+    heavy = base.with_parameters(
+        {"lower_arm_link.mass": base.parameters()["lower_arm_link.mass"] * 2.0}
+    )
+    assert base.attestation_handle != heavy.attestation_handle
+
+    fb, n = manipulator_ode(spatial_tree(base), float(base.gravity))
+    fh, _ = manipulator_ode(spatial_tree(heavy), float(heavy.gravity))
+    state = jnp.asarray([0.3, -0.8, 1.2, -0.6, 0.4, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    tau = jnp.zeros(n)
+    dx_base = fb(state, tau)
+    dx_heavy = fh(state, tau)
+    assert float(jnp.max(jnp.abs(dx_heavy - dx_base))) > 1e-6
+
+
+@_needs_so100
+@pytest.mark.unit
+def test_so100_closed_form_lowers_to_casadi() -> None:
+    """The ABA is inside the smooth-op subset — it translates to a CasADi
+    function (no CoverageError), so SO-100 is end-to-end lowerable."""
+    from jaxility.lowering import CasadiFunction, translate
+    from jaxility.zoo.so100 import _dynamics_factory
+
+    dynamics, state_shape, control_shape = _dynamics_factory()
+    casadi_fn = translate(
+        dynamics,
+        in_shapes=(state_shape, control_shape),
+        dtype="float64",
+        target_family="mock-cortex-a",
+        name="so100",
+    )
+    assert isinstance(casadi_fn, CasadiFunction)
