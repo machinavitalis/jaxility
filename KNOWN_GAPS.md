@@ -197,12 +197,16 @@ archives are out of scope for ADR-018 (hosted-ABI aarch64 only); they
 are T-052 and materially harder (no OS/malloc; newlib +
 embedded blasfeo config).
 
-**Archive byte-determinism — not yet.** Upstream acados/blasfeo invoke
-`ar` without the deterministic (`D`) flag, so the produced `.a`
-archives are not guaranteed byte-identical across builds. Jaxility
-records each archive's BLAKE3 hash in the manifest (`dep-archive:<name>`)
-for provenance, but does not yet claim bit-reproducible third-party
-archives.
+**Archive byte-determinism — closed (T-113).** Upstream acados/blasfeo
+invoke `ar` without the deterministic (`D`) flag, so their `.a` archives
+embed build member timestamps/uid/gid. `execute_dep_build` now normalizes
+each archive with `objcopy --enable-deterministic-archives` before hashing,
+so a rebuild from identical inputs yields byte-identical archives — the
+`dep-archive:<name>` manifest hashes are reproducible, not merely recorded.
+Verified by the Tier-B `test_build_cross_deps_is_byte_deterministic`
+(builds twice, asserts equal hashes). *Object-level* determinism of the
+individual `.o` members (compiler-embedded) is not separately claimed; the
+archive-metadata source of drift — the documented one — is closed.
 
 **Local dev gap on Apple Silicon (Pi 5 lane).** No darwin-arm64 host
 build of `aarch64-none-linux-gnu-gcc` is published by Arm, so the

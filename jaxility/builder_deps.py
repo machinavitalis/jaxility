@@ -49,10 +49,11 @@ resolves only inside a ``--start-group`` / ``--end-group`` wrapper.
 
 Provenance: :class:`CrossBuiltDeps` carries a BLAKE3 content hash per
 archive so the deployment manifest can record exactly which dependency
-binaries an artifact linked against. Note that upstream acados/blasfeo
-do not currently emit byte-deterministic archives (their ``ar``
-invocations are not ``D``-mode), so the recorded hashes are provenance,
-not a reproducibility guarantee — see KNOWN_GAPS.md.
+binaries an artifact linked against. Upstream acados/blasfeo build their
+``.a`` with non-``D``-mode ``ar`` (embedding member timestamps), so
+:func:`execute_dep_build` normalizes each archive with ``objcopy
+--enable-deterministic-archives`` before hashing (T-113); a rebuild from
+identical inputs then yields byte-identical archives and hashes.
 """
 
 from __future__ import annotations
@@ -459,6 +460,32 @@ def _run_or_raise(argv: tuple[str, ...], *, stage: str, timeout_s: float) -> Non
         )
 
 
+def _make_archive_deterministic(archive: Path, cc: str) -> None:
+    """Rewrite a static archive with zeroed member metadata (T-113).
+
+    Upstream acados / blasfeo / hpipm invoke ``ar`` without the ``D``
+    (deterministic) modifier, so each ``.a`` embeds the build's member
+    timestamps / uid / gid / mode — two builds from identical inputs then
+    hash differently. ``objcopy --enable-deterministic-archives`` (shipped
+    beside the cross ``gcc``) rewrites the archive with those fields zeroed, so
+    a rebuild yields byte-identical archives (invariant 5). Loud-fails if the
+    tool is missing rather than silently shipping a non-reproducible archive.
+    """
+    objcopy = f"{cc[:-3]}objcopy" if cc.endswith("gcc") else f"{cc}-objcopy"
+    if shutil.which(objcopy) is None:
+        raise ToolchainError(
+            f"{objcopy!r} not found on PATH; cannot make {archive.name} "
+            "byte-deterministic (it ships with the Arm GNU toolchain)."
+        )
+    normalized = archive.with_name(archive.name + ".det")
+    _run_or_raise(
+        (objcopy, "--enable-deterministic-archives", str(archive), str(normalized)),
+        stage="normalize-archive",
+        timeout_s=120.0,
+    )
+    normalized.replace(archive)
+
+
 def execute_dep_build(
     plan: DepBuildPlan, *, timeout_s: float = 1800.0
 ) -> CrossBuiltDeps:
@@ -504,6 +531,12 @@ def execute_dep_build(
             "silently disabled a component (check that BUILD_SHARED_LIBS "
             "is OFF and the blasfeo / hpipm submodules are present)."
         )
+
+    # T-113: normalize each archive to byte-determinism *before* hashing, so a
+    # rebuild from identical inputs produces identical dep-archive hashes — the
+    # manifest's dependency provenance is reproducible, not merely recorded.
+    for archive in plan.archive_paths:
+        _make_archive_deterministic(archive, cc)
 
     hashes = tuple(
         (p.name, blake3.blake3(p.read_bytes()).digest()) for p in plan.archive_paths

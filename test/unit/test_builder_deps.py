@@ -273,6 +273,52 @@ def _acados_source_dir() -> Path | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# T-113: byte-deterministic archives (unit — mocked, runs everywhere).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_make_archive_deterministic_uses_cross_objcopy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Derives the cross ``objcopy`` from the ``gcc`` name and rewrites the
+    archive in place with the deterministic flag."""
+    from jaxility import builder_deps as bd
+
+    archive = tmp_path / "libblasfeo.a"
+    archive.write_bytes(b"!<arch>\nnon-deterministic")
+    calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(bd.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    def fake_run(argv, *, stage, timeout_s):  # type: ignore[no-untyped-def]
+        calls.append(tuple(argv))
+        Path(argv[-1]).write_bytes(b"!<arch>\ndeterministic")
+
+    monkeypatch.setattr(bd, "_run_or_raise", fake_run)
+    bd._make_archive_deterministic(archive, "aarch64-none-linux-gnu-gcc")
+
+    assert calls[0][0] == "aarch64-none-linux-gnu-objcopy"
+    assert "--enable-deterministic-archives" in calls[0]
+    assert archive.read_bytes() == b"!<arch>\ndeterministic"  # replaced in place
+
+
+@pytest.mark.unit
+def test_make_archive_deterministic_missing_objcopy_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing ``objcopy`` fails loud, never ships a non-reproducible archive."""
+    from jaxility import builder_deps as bd
+    from jaxility.errors import ToolchainError
+
+    archive = tmp_path / "libhpipm.a"
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(bd.shutil, "which", lambda name: None)
+    with pytest.raises(ToolchainError, match="objcopy"):
+        bd._make_archive_deterministic(archive, "aarch64-none-linux-gnu-gcc")
+
+
 _HAVE_AARCH64 = shutil.which("aarch64-none-linux-gnu-gcc") is not None
 _HAVE_CMAKE = shutil.which("cmake") is not None
 _ACADOS_SRC = _acados_source_dir()
@@ -302,6 +348,33 @@ def test_build_cross_deps_pi5_produces_archives(tmp_path: Path) -> None:
     assert names == {f"lib{n}.a" for n in _CORE_ARCHIVES}
     for _, digest in deps.archive_hashes:
         assert len(digest) == 32  # BLAKE3 default digest length
+
+
+@pytest.mark.unit
+@pytest.mark.slow
+@pytest.mark.skipif(
+    not (_HAVE_AARCH64 and _HAVE_CMAKE and _ACADOS_SRC is not None),
+    reason=_TIER_B_REASON,
+)
+def test_build_cross_deps_is_byte_deterministic(tmp_path: Path) -> None:
+    """Tier B (T-113) — two independent cross-builds produce byte-identical
+    archives, so the manifest's dependency provenance is *reproducible*, not
+    merely recorded. The archive normalization (``objcopy -D``) is what makes
+    the upstream (non-``ar D``) builds hash-stable."""
+    assert _ACADOS_SRC is not None
+    first = build_cross_deps(
+        target=PI5,
+        acados_source_dir=_ACADOS_SRC,
+        build_dir=tmp_path / "build1",
+        install_prefix=tmp_path / "prefix1",
+    )
+    second = build_cross_deps(
+        target=PI5,
+        acados_source_dir=_ACADOS_SRC,
+        build_dir=tmp_path / "build2",
+        install_prefix=tmp_path / "prefix2",
+    )
+    assert dict(first.archive_hashes) == dict(second.archive_hashes)
 
 
 @pytest.mark.unit
