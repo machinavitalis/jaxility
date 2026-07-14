@@ -5,9 +5,9 @@
 | Name             | `so100`                                        |
 | Source           | `jaxterity.zoo.load("so100")` (real robot)     |
 | Target           | `mock-cortex-a`                                |
-| Controller       | WBC (OCP template: T-024 follow-on)            |
+| Controller       | WBC (single joint-space regulation task)       |
 | Real target lane | Post-launch (T-070)                            |
-| Status           | real robot; closed-form ABA dynamics, OCP pending |
+| Status           | real robot; **builds end-to-end** (ABA + WBC)  |
 | License          | MIT                                            |
 
 ## Dynamics (T-111)
@@ -37,10 +37,16 @@ Verified in `test/unit/test_jaxterity_chain.py`:
   both the attestation handle and the deployed dynamics.
 - `test_so100_closed_form_lowers_to_casadi` — no `CoverageError`.
 
+## Controller (T-024)
+
+`jaxility build so100 --target host` now produces a real artifact: the WBC
+template builds a 12-state / 6-input OCP from a single joint-space regulation
+task (hold a bent pose), with joint-torque bounds. Tested end-to-end in
+`test/unit/test_cli_zoo_build.py` (`test_cli_build_manipulator_and_flyer_succeed_end_to_end`,
+`test_zoo_ocp_template_builds`).
+
 ## Remaining work
 
-1. Wire the **WBC OCP template** for the 12-state manipulator (T-024). Until
-   then `jaxility build so100` fails *structurally* with a clear "template not
-   wired" reason — the dynamics translate, but the controller does not build yet.
-2. Land the Jaxterity `Task` DSL consumer (T-024).
-3. Bring up a real-target deployment lane post-launch (T-070).
+1. Consume the Jaxterity `Task` DSL for richer, multi-task WBC (T-024); the
+   current entry uses one joint-space regulation task.
+2. Bring up a real-target deployment lane post-launch (T-070).

@@ -259,16 +259,27 @@ def test_cli_build_stub_zoo_entry_returns_1_with_structured_reason(
 
 
 @pytest.mark.unit
-def test_cli_build_crazyflie_reports_template_not_wired(
+def test_cli_build_unwired_template_reports_structured_error(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Crazyflie's dynamics translate, but the OCP template is a T-110 follow-on.
-
-    The build must fail *structurally* (PATTERNS §8.2) — a clear JSON reason —
+    """When a zoo entry's dynamics lower but its OCP template is not wired
+    (here: template_options stripped so the WBC template lacks its weights),
+    the build must fail *structurally* (PATTERNS §8.2) — a clear JSON reason —
     rather than crash with an uncaught template error.
     """
     pytest.importorskip("jaxterity")
-    exit_code = cli_main(["build", "crazyflie"])
+    import dataclasses
+
+    from jaxility import zoo
+
+    original = zoo.load("so100")
+    unwired = dataclasses.replace(original, template_options={})
+    monkeypatch.setattr(
+        zoo, "load", lambda name: unwired if name == "so100" else original
+    )
+
+    exit_code = cli_main(["build", "so100", "--target", "host"])
     captured = capsys.readouterr()
     assert exit_code == 1
     report = json.loads(captured.out)

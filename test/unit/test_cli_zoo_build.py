@@ -230,35 +230,52 @@ def test_cli_build_surfaces_failing_jax_dynamics_factory(
 
 
 @pytest.mark.unit
-def test_cli_build_so100_reports_template_not_wired(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.skipif(not _TERA, reason="t_renderer required for host build")
+@pytest.mark.parametrize("name", ["so100", "crazyflie"])
+def test_cli_build_manipulator_and_flyer_succeed_end_to_end(
+    name: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """SO-100's ABA dynamics translate, but the WBC OCP template is a T-024
-    follow-on, so the build fails with a clear structured reason."""
+    """T-024 / T-110b: SO-100 (WBC) and Crazyflie (hover tracking MPC) now build
+    a real artifact end-to-end — their OCP templates are wired, not just their
+    dynamics lowerable."""
     pytest.importorskip("jaxterity")
-    exit_code = cli_main(["build", "so100", "--target", "host"])
+    exit_code = cli_main(
+        ["build", name, "--target", "host", "--work-dir", str(tmp_path)]
+    )
     captured = capsys.readouterr()
 
-    assert exit_code == 1
-    report = json.loads(captured.out)
-    assert report["ok"] is False
-    assert "not yet end-to-end buildable" in report["reason"]
+    assert exit_code == 0, captured.out
+    report = json.loads(captured.out.splitlines()[-1])
+    assert report["ok"] is True
+    assert report["zoo_name"] == name
+    assert report["payload_bytes"] > 0
+    assert Path(report["shared_library_path"]).exists()
+    assert len(report["artifact_content_hash_hex"]) == 64
 
 
 @pytest.mark.unit
-def test_cli_build_crazyflie_reports_template_not_wired(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Crazyflie's closed-form dynamics translate, but its OCP template is a
-    T-110 follow-on, so the build fails with a clear structured reason."""
+@pytest.mark.parametrize("name,nx,nu", [("so100", 12, 6), ("crazyflie", 13, 4)])
+def test_zoo_ocp_template_builds(name: str, nx: int, nu: int) -> None:
+    """The OCP template constructs a valid acados OCP with the right dims —
+    always-runnable evidence (no solver / libacados) that the template is wired."""
     pytest.importorskip("jaxterity")
-    exit_code = cli_main(["build", "crazyflie", "--target", "host"])
-    captured = capsys.readouterr()
+    pytest.importorskip("acados_template")
+    from jaxility.cli.build_cmd import _select_template_spec
+    from jaxility.lowering import build_ocp, translate
+    from jaxility.zoo import load
 
-    assert exit_code == 1
-    report = json.loads(captured.out)
-    assert report["ok"] is False
-    assert "not yet end-to-end buildable" in report["reason"]
+    entry = load(name)
+    f, state_shape, control_shape = entry.jax_dynamics_factory()
+    dynamics = translate(
+        f,
+        in_shapes=(state_shape, control_shape),
+        dtype=entry.dtype,
+        target_family=entry.target.family,
+        name=name,
+    )
+    ocp = build_ocp(dynamics, _select_template_spec(entry, dynamics))
+    assert ocp.model.x.rows() == nx
+    assert ocp.model.u.rows() == nu
 
 
 @pytest.mark.unit

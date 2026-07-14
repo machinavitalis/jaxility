@@ -73,10 +73,32 @@ def config() -> ZooDeploymentConfig:
         license="MIT (Jaxterity zoo + Jaxility zoo entry).",
         upstream_status="real-robot",
         remaining_work=(
-            "Wire the WBC OCP template for the 12-state manipulator (T-024); "
-            "until then `jaxility build so100` reports 'template not wired'.",
-            "Land the Jaxterity Task DSL consumer (T-024).",
+            "Consume the Jaxterity Task DSL for richer WBC tasks (T-024); the "
+            "current entry uses a single joint-space regulation task.",
             "Bring up a real-target lane (post-launch — T-070).",
         ),
         jax_dynamics_factory=_dynamics_factory,
+        # WBC as a single joint-space regulation task: hold a bent pose (T-024).
+        # State = [q(6), q̇(6)]; the CLI auto-builds one WBCTask from Q/R.
+        template_options={
+            "Q": (12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
+            "R": (0.1, 0.1, 0.1, 0.1, 0.1, 0.1),
+            "initial_state": (
+                0.3,
+                -0.8,
+                1.2,
+                -0.6,
+                0.4,
+                0.2,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+            "input_bounds": ((-5.0,) * 6, (5.0,) * 6),  # joint torque limits (N·m)
+            "horizon_steps": 20,
+            "time_horizon_s": 1.0,
+        },
     )

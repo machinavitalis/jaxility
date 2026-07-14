@@ -74,9 +74,13 @@ tested at a `1e-4` bound). An *independent* ABA and MuJoCo's internal
 The flyers hit ULP because they are well-conditioned with explicit closed
 forms; recursive manipulator dynamics inherently cannot.
 
-Note the closed-form dynamics **lower**; the crazyflie (quaternion
-tracking MPC) and so100 (WBC) *OCP templates* are follow-ons, so
-`jaxility build {crazyflie,so100}` fails structurally until they land.
+The closed-form dynamics **lower** *and* both robots now build end-to-end:
+`jaxility build so100` (WBC, T-024) and `jaxility build crazyflie` (hover
+tracking MPC, T-110b) produce real host artifacts. **Remaining OCP-template
+gap:** crazyflie's tracking MPC penalizes quaternion error in the
+Euclidean/tangent sense — correct for hover / small attitude, but a geodesic
+quaternion cost is needed for aggressive large-attitude maneuvers; and so100's
+WBC uses a single joint-space regulation task pending the Jaxterity Task DSL.
 
 ### `lax.while_loop` for any reason
 

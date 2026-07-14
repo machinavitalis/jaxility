@@ -77,6 +77,12 @@ scalar reciprocals. so100 is validated to **manipulator grade** against
 MJX (`~1e-5` rel), not ULP — an inherent floor for an independent
 recursive algorithm vs MuJoCo's `cinert` CRB (see `KNOWN_GAPS.md`).
 
+All three **build end-to-end** on the host — `jaxility build {cartpole,
+crazyflie, so100} --target host` produces a real artifact: cartpole via LQR,
+so100 via a joint-space WBC (T-024), and crazyflie via a hover-regulating
+tracking MPC (T-110b; the quaternion is penalized in the tangent sense, valid
+near identity — large-attitude geodesic cost is a documented follow-on).
+
 ## What we generate
 
 - **acados OCP**. `jaxility.lowering.build_ocp(dynamics, spec)` takes

@@ -5,9 +5,9 @@
 | Name             | `crazyflie`                                    |
 | Source           | Real Jaxterity robot (`JaxteritySource.from_robot`) |
 | Target           | `mock-cortex-m`                                |
-| Controller       | TrackingMPC (OCP template: T-110 follow-on)    |
+| Controller       | TrackingMPC (hover / small-attitude regulation) |
 | Real target lane | STM32H7 / Cortex-M7 (T-050..T-053)             |
-| Status           | real robot; closed-form dynamics, OCP pending  |
+| Status           | real robot; **builds end-to-end** (Newton-Euler + tracking MPC) |
 | License          | MIT (Jaxterity zoo + Jaxility zoo entry)       |
 
 ## Dynamics (T-110)
@@ -39,11 +39,18 @@ It stays inside the smooth-op subset, so it **lowers to CasADi** — verified in
   mass moves both the attestation handle and the deployed dynamics.
 - `test_crazyflie_closed_form_lowers_to_casadi` — no `CoverageError`.
 
+## Controller (T-110b)
+
+`jaxility build crazyflie --target host` now produces a real artifact: a
+tracking MPC that regulates hover at the origin with identity attitude. The
+13-state cost penalizes quaternion error in the Euclidean/tangent sense, which
+is correct **near identity (hover / small attitude)**; the reference is the
+weight-cancelling hover thrust, with thrust/moment bounds. Tested end-to-end in
+`test/unit/test_cli_zoo_build.py`.
+
 ## Remaining work
 
-1. Wire the **quaternion-aware tracking-MPC OCP template** (follow-on to T-110;
-   attitude in acados needs a unit-norm handling choice). Until then
-   `jaxility build crazyflie` fails *structurally* with a clear "template not
-   wired" reason — the dynamics translate, but the controller does not build yet.
+1. **Large-attitude quaternion MPC** (T-110b follow-on): a geodesic quaternion
+   cost + unit-norm handling to generalize beyond hover to aggressive maneuvers.
 2. Cortex-M7 cross-compilation lane + linker scripts (T-051/T-052).
 3. FVP-driven HIL parity (T-053).

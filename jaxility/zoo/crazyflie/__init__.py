@@ -166,10 +166,58 @@ def config() -> ZooDeploymentConfig:
         license="MIT (Jaxterity zoo + Jaxility zoo entry).",
         upstream_status="real-robot",
         remaining_work=(
-            "Wire the quaternion-aware tracking-MPC OCP template (follow-on to "
-            "T-110; attitude in acados needs a unit-norm handling choice).",
+            "Large-attitude quaternion MPC (T-110b): the current tracking MPC "
+            "penalizes quaternion error in the tangent (Euclidean) sense, valid "
+            "for hover / small attitude; a geodesic quaternion cost + unit-norm "
+            "handling would generalize it to aggressive maneuvers.",
             "Cortex-M7 cross-compilation lane + linker scripts (T-051/T-052).",
             "FVP-driven HIL parity (T-053).",
         ),
         jax_dynamics_factory=_dynamics_factory,
+        # Hover-regulating tracking MPC (T-110b). State = [pos(3), quat_wxyz(4),
+        # v_world(3), omega_body(3)]; control = [thrust, Mx, My, Mz]. The
+        # reference is hover at the origin with identity attitude; the quaternion
+        # is penalized in the Euclidean/tangent sense — correct near identity
+        # (hover). ``input_reference`` is the weight-cancelling hover thrust
+        # (MASS·g = 0.027·9.81 N).
+        template_options={
+            "Q": (
+                10.0,
+                10.0,
+                10.0,  # position
+                5.0,
+                5.0,
+                5.0,
+                5.0,  # quaternion (near-identity tangent penalty)
+                1.0,
+                1.0,
+                1.0,  # world velocity
+                1.0,
+                1.0,
+                1.0,  # body angular rate
+            ),
+            "R": (0.1, 0.1, 0.1, 0.1),
+            "initial_state": (
+                0.1,
+                0.0,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ),
+            "reference_trajectory": (
+                (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            ),
+            "input_reference": (0.026487, 0.0, 0.0, 0.0),  # MASS·g hover thrust
+            "input_bounds": ((0.0, -0.05, -0.05, -0.05), (0.6, 0.05, 0.05, 0.05)),
+            "horizon_steps": 20,
+            "time_horizon_s": 1.0,
+        },
     )
