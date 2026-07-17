@@ -29,7 +29,10 @@ only the original SX symbols, so either backend threads in unchanged (no "free
 variable" error). The manifest never attested JAX primitives (coverage is a
 translation-time gate a generated graph never enters), so provenance travels via
 ``Manifest.toolchain_versions['pinocchio']`` (see
-:func:`jaxility.manifest.detect_pinocchio_version`) rather than a coverage trail.
+:func:`jaxility.manifest.detect_pinocchio_version`). In place of the jaxpr
+coverage trail, ``CasadiFunction.primitives_used`` carries an *op-level* audit
+trail — the CasADi operations the emitted algorithm actually contains (e.g.
+``casadi:sin``, ``casadi:mul``).
 
 **Scope of this first cut.** Fixed-base robots whose joints are all 1-DoF
 (revolute / prismatic), i.e. ``nq == nv``. Floating base (``nq != nv``) is
@@ -107,6 +110,34 @@ def _require_pinocchio_casadi() -> Any:
             "`backend='jaxility-aba'` (the pip-only path, no extra deps)."
         ) from exc
     return cpin
+
+
+# Structural instructions that carry no math — excluded from the audit trail.
+_STRUCTURAL_OPS = frozenset({"OP_INPUT", "OP_OUTPUT", "OP_CONST", "OP_PARAMETER"})
+
+
+def _casadi_ops_used(ca: Any, fn: Any) -> frozenset[str]:
+    """The set of CasADi math operations in a generated Function's algorithm.
+
+    A generated graph has no jaxpr, so ``CasadiFunction.primitives_used`` can't
+    carry the JAX-primitive coverage trail. Instead we record the actual CasADi
+    operations the emitted SX algorithm contains (e.g. ``casadi:sin``,
+    ``casadi:mul``) — an op-level audit trail of the deployed math. Structural
+    I/O / constant instructions are excluded. Returns an empty set if the
+    installed CasADi build does not expose instruction introspection.
+    """
+    op_names = {getattr(ca, n): n for n in dir(ca) if n.startswith("OP_")}
+    try:
+        count = fn.n_instructions()
+    except Exception:  # pragma: no cover - introspection unsupported
+        return frozenset()
+    ops: set[str] = set()
+    for i in range(count):
+        name = op_names.get(fn.instruction_id(i))
+        if name is None or name in _STRUCTURAL_OPS:
+            continue
+        ops.add(f"casadi:{name[3:].lower()}")  # OP_ADD -> casadi:add
+    return frozenset(ops)
 
 
 def _looks_like_xml(source: str | Path) -> bool:
@@ -415,9 +446,10 @@ def generate_dynamics(
     -------
     CasadiFunction
         ``sx_inputs`` / ``sx_outputs`` preserve the original SX symbols so
-        :func:`build_ocp` accepts the model directly. ``primitives_used`` is
-        empty: there is no jaxpr, so the coverage audit trail does not apply —
-        provenance travels via ``Manifest.toolchain_versions['pinocchio']``.
+        :func:`build_ocp` accepts the model directly. ``primitives_used`` holds
+        the op-level audit trail (the CasADi operations in the emitted graph,
+        e.g. ``casadi:sin``); there is no jaxpr, so build provenance additionally
+        travels via ``Manifest.toolchain_versions['pinocchio']``.
 
     Raises
     ------
@@ -427,8 +459,8 @@ def generate_dynamics(
         / ``damping`` length, or (``"pinocchio-casadi"``) the CasADi bindings
         being absent.
     """
-    import numpy as np  # noqa: PLC0415
     import casadi as ca  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
 
     pinocchio = _require_pinocchio()
     model = _build_model(pinocchio, source, source_format)
@@ -467,7 +499,7 @@ def generate_dynamics(
         fn=fn,
         input_shapes=((nx,), (nv,)),
         output_shapes=((nx,),),
-        primitives_used=frozenset(),
+        primitives_used=_casadi_ops_used(ca, fn),
         sx_inputs=(x, u),
         sx_outputs=(dx,),
     )

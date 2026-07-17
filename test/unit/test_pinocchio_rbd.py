@@ -104,7 +104,6 @@ def test_generate_dynamics_shapes_and_eval() -> None:
     assert isinstance(dyn, CasadiFunction)
     assert dyn.input_shapes == ((4,), (2,))
     assert dyn.output_shapes == ((4,),)
-    assert dyn.primitives_used == frozenset()  # no jaxpr -> no coverage trail
 
     x = np.array([0.2, -0.3, 0.5, -0.1])  # [q(2), v(2)]
     u = np.array([0.1, -0.05])
@@ -139,6 +138,21 @@ def test_jaxility_aba_matches_pinocchio_oracle_branched() -> None:
         rel = np.linalg.norm(dx[nv:] - qdd_ref) / (np.linalg.norm(qdd_ref) + 1e-12)
         worst = max(worst, rel)
     assert worst < 1e-10, f"tree-ABA vs pin.aba worst rel {worst:.2e}"
+
+
+@pytest.mark.unit
+def test_generate_dynamics_records_op_level_audit_trail() -> None:
+    """primitives_used carries the CasADi ops in the emitted graph (no jaxpr)."""
+    # j2's axis is perpendicular to gravity, so gravity torque -> trig survives
+    # constant-folding; the graph must contain sin/cos plus the arithmetic ops.
+    dyn = generate_dynamics(_TWO_LINK_URDF, backend="jaxility-aba")
+    ops = dyn.primitives_used
+    assert ops, "expected a non-empty op-level audit trail"
+    assert all(o.startswith("casadi:") for o in ops)
+    assert {"casadi:sin", "casadi:cos"} <= ops
+    assert {"casadi:mul", "casadi:add", "casadi:sub", "casadi:div"} <= ops
+    # structural I/O instructions are excluded from the trail
+    assert not any(o in {"casadi:input", "casadi:output", "casadi:const"} for o in ops)
 
 
 @pytest.mark.unit
