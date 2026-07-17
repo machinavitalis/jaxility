@@ -54,6 +54,16 @@ Stub zoo entries (Crazyflie, Berkeley Humanoid Lite) have ``None`` for
 that as a structured "stub upstream" error.
 """
 
+CasadiDynamicsFactory = Callable[[], Any]
+"""Generator-sourced dynamics: a zero-arg factory returning a lowered
+:class:`~jaxility.lowering.CasadiFunction` directly (from
+:func:`jaxility.lowering.generate_dynamics`), bypassing the JAX → CasADi
+translator. This is how a robot whose dynamics are generated from its
+URDF/MJCF (T-126) enters the build path — the factory owns the parse +
+lowering and hands back a ready ``f(x, u) -> dx`` CasADi function. When
+set, it takes precedence over :attr:`jax_dynamics_factory` in the CLI.
+"""
+
 
 @dataclass(frozen=True)
 class ZooDeploymentConfig:
@@ -76,6 +86,16 @@ class ZooDeploymentConfig:
     entries (Cartpole, SO-100) supply a factory that calls
     :func:`jaxility.cli.dynamics_adapter.jax_dynamics_from_robot` against
     the upstream Jaxterity Robot.
+    """
+
+    casadi_dynamics_factory: CasadiDynamicsFactory | None = None
+    """Generator-sourced dynamics hook (T-126).
+
+    ``None`` for entries whose dynamics come from a JAX function
+    (:attr:`jax_dynamics_factory`). Set for entries generated from a
+    URDF/MJCF via :func:`jaxility.lowering.generate_dynamics` (e.g. a
+    branched humanoid). When present, the CLI uses it and skips the
+    JAX-translate path.
     """
 
     template_options: dict[str, Any] = field(default_factory=dict)
@@ -109,12 +129,14 @@ def _load_configs() -> dict[str, ZooDeploymentConfig]:
     from .cartpole import config as cartpole_config
     from .crazyflie import config as crazyflie_config
     from .so100 import config as so100_config
+    from .unitree_g1 import config as unitree_g1_config
 
     entries = (
         cartpole_config(),
         so100_config(),
         crazyflie_config(),
         berkeley_config(),
+        unitree_g1_config(),
     )
     return {entry.name: entry for entry in entries}
 
@@ -145,6 +167,7 @@ def load(name: str) -> ZooDeploymentConfig:
 
 __all__ = [
     "CONFIGS",
+    "CasadiDynamicsFactory",
     "ControllerTemplate",
     "UpstreamStatus",
     "ZooDeploymentConfig",

@@ -100,15 +100,15 @@ def run_build(
         _emit({"ok": False, "reason": str(exc)})
         return 2
 
-    if entry.jax_dynamics_factory is None:
+    if entry.casadi_dynamics_factory is None and entry.jax_dynamics_factory is None:
         _emit(
             {
                 "ok": False,
                 "reason": (
-                    f"zoo entry {zoo_name!r} has no jax_dynamics_factory "
-                    f"(upstream_status={entry.upstream_status!r}); the host "
-                    "build path needs real JAX dynamics. Promote upstream "
-                    "first or supply a stub factory."
+                    f"zoo entry {zoo_name!r} has no dynamics factory "
+                    f"(upstream_status={entry.upstream_status!r}); the host build "
+                    "path needs real dynamics (a JAX function or a generated "
+                    "CasADi function). Promote upstream first or supply a factory."
                 ),
             }
         )
@@ -120,39 +120,49 @@ def run_build(
         _emit({"ok": False, "reason": str(exc)})
         return 2
 
-    try:
-        jax_fn, state_shape, control_shape = entry.jax_dynamics_factory()
-    except Exception as exc:
-        # Audit N-5 fix: the previous ``# pragma: no cover`` on this
-        # branch was justified by "no test exercises it". The test in
-        # ``test/unit/test_cli_zoo_build.py`` now drives a factory that
-        # deliberately raises, so the pragma is gone and coverage
-        # tracks this branch normally.
-        _emit(
-            {
-                "ok": False,
-                "reason": f"failed to extract JAX dynamics: {exc!r}",
-            }
-        )
-        return 1
-
-    try:
+    # Generator-sourced entries (T-126) hand back a CasadiFunction directly and
+    # skip the JAX-translate path; otherwise translate the entry's JAX dynamics.
+    if entry.casadi_dynamics_factory is not None:
+        try:
+            dynamics = entry.casadi_dynamics_factory()
+        except Exception as exc:
+            _emit({"ok": False, "reason": f"failed to generate dynamics: {exc!r}"})
+            return 1
+    else:
+        # The early return above guarantees a factory exists; in this branch
+        # casadi_dynamics_factory is None, so jax_dynamics_factory is not.
+        assert entry.jax_dynamics_factory is not None
+        try:
+            jax_fn, state_shape, control_shape = entry.jax_dynamics_factory()
+        except Exception as exc:
+            # Audit N-5 fix: the previous ``# pragma: no cover`` on this
+            # branch was justified by "no test exercises it". The test in
+            # ``test/unit/test_cli_zoo_build.py`` now drives a factory that
+            # deliberately raises, so the pragma is gone and coverage
+            # tracks this branch normally.
+            _emit(
+                {
+                    "ok": False,
+                    "reason": f"failed to extract JAX dynamics: {exc!r}",
+                }
+            )
+            return 1
         dynamics = translate(
             jax_fn, in_shapes=(state_shape, control_shape), name=zoo_name
         )
+
+    try:
         spec = _select_template_spec(entry, dynamics)
     except Exception as exc:
-        # The JAX dynamics may lower cleanly yet still not be end-to-end
-        # buildable — e.g. a zoo entry whose controller template is not wired
-        # yet (Crazyflie's quaternion-aware tracking MPC is a T-110 follow-on).
-        # Surface that as a structured report (PATTERNS §8.2), never an
-        # uncaught crash.
+        # The dynamics may lower cleanly yet still not be end-to-end buildable —
+        # e.g. a zoo entry whose controller template is not wired yet. Surface
+        # that as a structured report (PATTERNS §8.2), never an uncaught crash.
         _emit(
             {
                 "ok": False,
                 "reason": (
                     f"zoo entry {zoo_name!r} is not yet end-to-end buildable: "
-                    f"{type(exc).__name__}: {exc}. The dynamics translate, but the "
+                    f"{type(exc).__name__}: {exc}. The dynamics lower, but the "
                     f"{entry.template!r} template is not wired for this entry — "
                     "see the entry's remaining_work."
                 ),

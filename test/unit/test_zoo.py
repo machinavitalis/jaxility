@@ -25,7 +25,13 @@ from jaxility.zoo import (
     mock_build,
 )
 
-EXPECTED_ENTRIES = ("berkeley_humanoid_lite", "cartpole", "crazyflie", "so100")
+EXPECTED_ENTRIES = (
+    "berkeley_humanoid_lite",
+    "cartpole",
+    "crazyflie",
+    "so100",
+    "unitree_g1",
+)
 """The zoo entries; alphabetical."""
 
 
@@ -74,7 +80,7 @@ def test_real_and_stub_status_distinction(
         for name, c in configs.items()
         if c.upstream_status == "stub-pending-jaxterity"
     }
-    assert real == {"cartpole", "so100", "crazyflie"}
+    assert real == {"cartpole", "so100", "crazyflie", "unitree_g1"}
     assert stub == {"berkeley_humanoid_lite"}
 
 
