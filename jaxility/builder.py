@@ -88,13 +88,15 @@ def build_for_target(
     source_attestation_handle: bytes,
     work_dir: Path,
     build_timestamp_utc: int | None = None,
+    extra_toolchain_versions: dict[str, str] | None = None,
 ) -> BuildBundle:
     """Run the full lowering pipeline and produce a content-addressed Artifact.
 
     Args
     ----
     dynamics : CasadiFunction
-        From :func:`jaxility.lowering.translate`.
+        From :func:`jaxility.lowering.translate` or
+        :func:`jaxility.lowering.generate_dynamics`.
     spec : OcpTemplateSpec
         From a template factory (LQR / TrackingMPC / WBC /
         CentroidalMPC) or hand-rolled.
@@ -109,6 +111,12 @@ def build_for_target(
         caller owns its lifecycle; tests use a ``tmp_path``.
     build_timestamp_utc : int | None
         Override for the manifest timestamp; defaults to current time.
+    extra_toolchain_versions : dict[str, str] | None
+        Extra entries merged into the manifest's ``toolchain_versions``
+        (over the detected defaults) — the honest provenance record for
+        code-generation tools that participated but aren't detected per
+        target, e.g. ``{"pinocchio": ...}`` when the dynamics came from
+        :func:`jaxility.lowering.generate_dynamics`.
 
     Returns
     -------
@@ -188,10 +196,14 @@ def build_for_target(
     if build_timestamp_utc is None:
         build_timestamp_utc = int(time.time() * 1_000_000)
 
+    toolchain_versions = detect_toolchain_versions(target)
+    if extra_toolchain_versions:
+        toolchain_versions = {**toolchain_versions, **extra_toolchain_versions}
+
     manifest = Manifest(
         schema_version=SCHEMA_VERSION_V0,
         source_attestation_handle=source_attestation_handle,
-        toolchain_versions=detect_toolchain_versions(target),
+        toolchain_versions=toolchain_versions,
         target_profile_hash=target.hash,
         artifact_content_hash=blake3.blake3(payload).digest(),
         build_timestamp_utc=build_timestamp_utc,

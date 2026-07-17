@@ -114,6 +114,78 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    build_urdf = sub.add_parser(
+        "build-urdf",
+        help=(
+            "Build a deployable artifact directly from a fixed-base URDF/MJCF "
+            "(T-124): Pinocchio-generated rigid-body dynamics + a joint-space "
+            "regulation controller, with a signed manifest. Host target only."
+        ),
+    )
+    build_urdf.add_argument(
+        "source",
+        help="Path to a fixed-base URDF or MJCF description file.",
+    )
+    build_urdf.add_argument(
+        "--format",
+        dest="source_format",
+        choices=["urdf", "mjcf"],
+        default=None,
+        help="Description format. Default: inferred from the file extension.",
+    )
+    build_urdf.add_argument(
+        "--backend",
+        dest="backend",
+        choices=["auto", "pinocchio-casadi", "jaxility-aba"],
+        default="auto",
+        help=(
+            "Dynamics backend. ``jaxility-aba`` is pip-only (Pinocchio parses, "
+            "jaxility emits the CasADi ABA); ``pinocchio-casadi`` needs a "
+            "CasADi-enabled Pinocchio. ``auto`` prefers the native path when "
+            "available. Default ``auto``."
+        ),
+    )
+    build_urdf.add_argument(
+        "--target",
+        dest="target_name",
+        default="host",
+        help="Target identifier (``host`` / ``host-darwin`` / ``host-linux``).",
+    )
+    build_urdf.add_argument(
+        "--horizon",
+        dest="horizon_steps",
+        type=int,
+        default=20,
+        help="OCP discretisation horizon length N. Default 20.",
+    )
+    build_urdf.add_argument(
+        "--time-horizon",
+        dest="time_horizon_s",
+        type=float,
+        default=1.0,
+        help="OCP prediction horizon in seconds. Default 1.0.",
+    )
+    build_urdf.add_argument(
+        "--state-cost",
+        dest="state_cost",
+        type=float,
+        default=1.0,
+        help="Uniform diagonal state-cost weight for the regulation task.",
+    )
+    build_urdf.add_argument(
+        "--input-cost",
+        dest="input_cost",
+        type=float,
+        default=0.1,
+        help="Uniform diagonal input-cost weight for the regulation task.",
+    )
+    build_urdf.add_argument(
+        "--work-dir",
+        dest="work_dir",
+        default=None,
+        help="Directory acados writes generated C and binaries into.",
+    )
+
     bench = sub.add_parser(
         "bench",
         help=(
@@ -185,6 +257,21 @@ def main(argv: list[str] | None = None) -> int:
             zoo_name=args.zoo_name,
             target_name=args.target_name,
             work_dir=args.work_dir,
+        )
+
+    if args.command == "build-urdf":
+        from .build_urdf_cmd import run_build_urdf
+
+        return run_build_urdf(
+            source=args.source,
+            source_format=args.source_format,
+            backend=args.backend,
+            target_name=args.target_name,
+            work_dir=args.work_dir,
+            horizon_steps=args.horizon_steps,
+            time_horizon_s=args.time_horizon_s,
+            state_cost=args.state_cost,
+            input_cost=args.input_cost,
         )
 
     if args.command == "bench":
