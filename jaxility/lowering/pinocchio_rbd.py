@@ -294,6 +294,123 @@ def _extract_tree(model: Any, np: Any) -> list[dict[str, Any]]:
     return tree
 
 
+# --------------------------------------------------------------------------- #
+# MuJoCo tree source (for MJCF/MJX-native robots, T-126).                       #
+# Builds the spatial tree directly from a *compiled* MuJoCo model — the         #
+# authoritative source for an MJX stack — reading masses / inertias / joint     #
+# frames and, crucially, ``dof_armature`` (which Pinocchio's MJCF parser        #
+# silently zeroes, and which dominates the effective inertia of light joints).  #
+# Scope: fixed-base, 1-DoF (hinge/slide) joints at the body origin.             #
+# --------------------------------------------------------------------------- #
+
+
+def _require_mujoco() -> Any:
+    try:
+        import mujoco  # noqa: PLC0415
+    except Exception as exc:
+        raise ToolchainError(
+            "mujoco is not installed, but tree_source='mujoco' needs it to compile "
+            "the model. Install it (`pip install mujoco`) or use the default "
+            "tree_source='pinocchio'."
+        ) from exc
+    return mujoco
+
+
+def _quat2mat(np: Any, q: Any) -> Any:
+    """Rotation matrix from a MuJoCo ``[w, x, y, z]`` quaternion."""
+    w, x, y, z = float(q[0]), float(q[1]), float(q[2]), float(q[3])
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
+
+
+def _extract_tree_from_mujoco(
+    mj: Any, np: Any
+) -> tuple[list[dict[str, Any]], Any, Any]:
+    """Spatial tree + per-DoF armature/damping from a compiled MuJoCo model.
+
+    Returns ``(tree, armature, damping)``. Bodies with a fixed (jointless) chain
+    to the world form the base; a fixed appendage body's inertia is folded into
+    its nearest moving ancestor. Raises on a joint type outside the 1-DoF scope.
+    """
+
+    def local_X(b: int) -> Any:
+        E = _quat2mat(np, mj.body_quat[b]).T  # child-in-parent -> motion uses R^T
+        return _np_xrot(np, E) @ _np_xtrans(np, np.asarray(mj.body_pos[b]))
+
+    def body_spatial_inertia(b: int) -> Any:
+        R = _quat2mat(np, mj.body_iquat[b])
+        Ic = R @ np.diag(mj.body_inertia[b]) @ R.T  # about com, in body frame
+        return _np_spatial_inertia(
+            np, float(mj.body_mass[b]), np.asarray(mj.body_ipos[b]), Ic
+        )
+
+    moving = [b for b in range(1, mj.nbody) if mj.body_jntnum[b] == 1]
+    idx = {b: k for k, b in enumerate(moving)}
+
+    def ancestor(b: int) -> tuple[int, Any]:
+        """(nearest moving-ancestor index or -1, X from that frame to b)."""
+        X = local_X(b)
+        cur = int(mj.body_parentid[b])
+        while cur != 0 and mj.body_jntnum[cur] == 0:  # climb fixed bodies
+            X = X @ local_X(cur)
+            cur = int(mj.body_parentid[cur])
+        return (idx[cur] if cur in idx else -1), X
+
+    tree: list[dict[str, Any]] = [None] * len(moving)  # type: ignore[list-item]
+    for b in moving:
+        jid = int(mj.body_jntadr[b])
+        jtype = int(mj.jnt_type[jid])
+        if jtype not in (2, 3):  # 3=hinge, 2=slide
+            name = _mj_joint_name(mj, jid)
+            raise ToolchainError(
+                f"joint {name!r} is not a 1-DoF hinge/slide; the MuJoCo tree "
+                "source supports fixed-base 1-DoF joints only (T-126 scope)."
+            )
+        if not bool(np.allclose(mj.jnt_pos[jid], 0.0)):
+            raise ToolchainError(
+                "MuJoCo tree source requires joints anchored at the body origin "
+                "(jnt_pos == 0); an offset joint is out of scope."
+            )
+        kind = "R" if jtype == 3 else "P"
+        axis = np.asarray(mj.jnt_axis[jid], dtype=float)
+        parent, X = ancestor(b)
+        S = (
+            np.concatenate([axis, np.zeros(3)])
+            if kind == "R"
+            else np.concatenate([np.zeros(3), axis])
+        )
+        tree[idx[b]] = {
+            "parent": parent,
+            "XT": X,
+            "kind": kind,
+            "axis": axis,
+            "S": S,
+            "I": body_spatial_inertia(b),
+        }
+
+    # Fold fixed appendage bodies (non-root, hanging off a moving body) into it.
+    for b in range(1, mj.nbody):
+        if mj.body_jntnum[b] != 0:
+            continue
+        anc, X = ancestor(b)
+        if anc < 0:
+            continue  # part of the fixed base -> inertia never moves, dropped
+        tree[anc]["I"] = tree[anc]["I"] + X.T @ body_spatial_inertia(b) @ X
+
+    return tree, np.asarray(mj.dof_armature), np.asarray(mj.dof_damping)
+
+
+def _mj_joint_name(mj: Any, jid: int) -> str:
+    import mujoco  # noqa: PLC0415
+
+    return mujoco.mj_id2name(mj, mujoco.mjtObj.mjOBJ_JOINT, jid) or f"joint#{jid}"
+
+
 def _emit_jaxility_aba(
     ca: Any,
     np: Any,
@@ -394,11 +511,100 @@ def _emit_pinocchio_casadi(
     return x, u, dx
 
 
+def _generate_from_pinocchio(
+    ca: Any,
+    np: Any,
+    source: str | Path,
+    source_format: str,
+    backend: str,
+    gravity: tuple[float, float, float],
+    armature: Any,
+    damping: Any,
+) -> tuple[Any, Any, Any, int]:
+    """Parse with Pinocchio, then emit via the chosen backend. Returns (x,u,dx,nv)."""
+    pinocchio = _require_pinocchio()
+    model = _build_model(pinocchio, source, source_format)
+    nq, nv = model.nq, model.nv
+    if nq != nv:
+        raise ToolchainError(
+            f"generate_dynamics supports fixed-base 1-DoF-joint robots only "
+            f"(nq == nv); got nq={nq}, nv={nv}. A floating base or a "
+            "spherical/free joint is out of scope for this first cut (its state "
+            "derivative is not [v, qdd]); legged robots additionally need a "
+            "contact model (T-122)."
+        )
+    arm = _checked_vector(np, armature, nv, "armature")
+    damp = _checked_vector(np, damping, nv, "damping")
+
+    if backend == "auto":
+        backend = "pinocchio-casadi" if _has_pinocchio_casadi() else "jaxility-aba"
+    if backend == "pinocchio-casadi":
+        cpin = _require_pinocchio_casadi()
+        return (*_emit_pinocchio_casadi(cpin, ca, np, model, gravity, arm, damp), nv)
+    if backend == "jaxility-aba":
+        tree = _extract_tree(model, np)
+        return (*_emit_jaxility_aba(ca, np, tree, gravity, arm, damp), nv)
+    raise ToolchainError(
+        f"unknown backend {backend!r}; expected 'auto', 'pinocchio-casadi', "
+        "or 'jaxility-aba'."
+    )
+
+
+def _generate_from_mujoco(
+    ca: Any,
+    np: Any,
+    source: str | Path,
+    backend: str,
+    gravity: tuple[float, float, float],
+    armature: Any,
+    damping: Any,
+) -> tuple[Any, Any, Any, int]:
+    """Compile with MuJoCo and emit via jaxility-aba. Returns (x,u,dx,nv).
+
+    The compiled model is authoritative for an MJX stack and carries
+    ``dof_armature`` / ``dof_damping`` directly, so the deployed dynamics tracks
+    the same reflected-rotor inertia MJX uses — the term Pinocchio's parser drops.
+    Explicit ``armature`` / ``damping`` arguments override the model's values.
+    """
+    if backend == "pinocchio-casadi":
+        raise ToolchainError(
+            "backend='pinocchio-casadi' is incompatible with tree_source='mujoco'; "
+            "the MuJoCo tree source emits via the 'jaxility-aba' backend."
+        )
+    mujoco = _require_mujoco()
+    mj = (
+        mujoco.MjModel.from_xml_string(str(source))
+        if _looks_like_xml(source)
+        else mujoco.MjModel.from_xml_path(str(source))
+    )
+    if mj.nq != mj.nv:
+        raise ToolchainError(
+            f"generate_dynamics supports fixed-base 1-DoF-joint robots only "
+            f"(nq == nv); got nq={mj.nq}, nv={mj.nv}. A floating/ball/free joint "
+            "is out of scope (its state derivative is not [v, qdd]); legged robots "
+            "additionally need a contact model (T-122)."
+        )
+    nv = mj.nv
+    tree, mj_arm, mj_damp = _extract_tree_from_mujoco(mj, np)
+    # Explicit args win; otherwise take the model's (dropping an all-zero damping).
+    arm = (
+        _checked_vector(np, armature, nv, "armature")
+        if armature is not None
+        else mj_arm
+    )
+    if damping is not None:
+        damp: Any = _checked_vector(np, damping, nv, "damping")
+    else:
+        damp = mj_damp if bool(np.any(mj_damp)) else None
+    return (*_emit_jaxility_aba(ca, np, tree, gravity, arm, damp), nv)
+
+
 def generate_dynamics(
     source: str | Path,
     *,
     source_format: PyLiteral["urdf", "mjcf"] = "urdf",
     backend: PyLiteral["auto", "pinocchio-casadi", "jaxility-aba"] = "auto",
+    tree_source: PyLiteral["pinocchio", "mujoco"] = "pinocchio",
     gravity: tuple[float, float, float] = _DEFAULT_GRAVITY,
     armature: Sequence[float] | None = None,
     damping: Sequence[float] | None = None,
@@ -424,6 +630,14 @@ def generate_dynamics(
         in jaxility's own CasADi from the parsed model (pip-only, no extra deps;
         manipulator-grade ``~1e-5``). ``"auto"`` picks the former when the
         bindings are importable, else the latter.
+    tree_source:
+        Where the rigid-body tree comes from. ``"pinocchio"`` (default) parses
+        with Pinocchio. ``"mujoco"`` compiles the description with MuJoCo and
+        builds the tree from the authoritative compiled model — the right source
+        for an MJX-native robot: it reads ``dof_armature`` / ``dof_damping``
+        directly (Pinocchio's parser zeroes armature, which dominates light
+        joints), so the deployed dynamics tracks MJX. Emits via ``jaxility-aba``
+        (incompatible with ``backend='pinocchio-casadi'``); needs ``mujoco``.
     gravity:
         World-frame gravity vector. Defaults to ``(0, 0, -9.81)``; Pinocchio's
         parsers do not reliably apply the description's own gravity option, so it
@@ -462,37 +676,20 @@ def generate_dynamics(
     import casadi as ca  # noqa: PLC0415
     import numpy as np  # noqa: PLC0415
 
-    pinocchio = _require_pinocchio()
-    model = _build_model(pinocchio, source, source_format)
-    nq, nv = model.nq, model.nv
-    if nq != nv:
-        raise ToolchainError(
-            f"generate_dynamics supports fixed-base 1-DoF-joint robots only "
-            f"(nq == nv); got nq={nq}, nv={nv}. A floating base or a "
-            "spherical/free joint is out of scope for this first cut (its state "
-            "derivative is not [v, qdd]); legged robots additionally need a "
-            "contact model (T-122)."
+    if tree_source == "mujoco":
+        x, u, dx, nv = _generate_from_mujoco(
+            ca, np, source, backend, gravity, armature, damping
         )
-
-    arm = _checked_vector(np, armature, nv, "armature")
-    damp = _checked_vector(np, damping, nv, "damping")
-
-    if backend == "auto":
-        backend = "pinocchio-casadi" if _has_pinocchio_casadi() else "jaxility-aba"
-
-    if backend == "pinocchio-casadi":
-        cpin = _require_pinocchio_casadi()
-        x, u, dx = _emit_pinocchio_casadi(cpin, ca, np, model, gravity, arm, damp)
-    elif backend == "jaxility-aba":
-        tree = _extract_tree(model, np)
-        x, u, dx = _emit_jaxility_aba(ca, np, tree, gravity, arm, damp)
+    elif tree_source == "pinocchio":
+        x, u, dx, nv = _generate_from_pinocchio(
+            ca, np, source, source_format, backend, gravity, armature, damping
+        )
     else:
         raise ToolchainError(
-            f"unknown backend {backend!r}; expected 'auto', 'pinocchio-casadi', "
-            "or 'jaxility-aba'."
+            f"unknown tree_source {tree_source!r}; expected 'pinocchio' or 'mujoco'."
         )
 
-    nx = nq + nv
+    nx = 2 * nv
     fn = ca.Function(name, [x, u], [dx])
     return CasadiFunction(
         name=name,

@@ -232,6 +232,97 @@ def test_pinocchio_casadi_backend_when_available() -> None:
 
 
 @pytest.mark.unit
+def test_mujoco_tree_source_incompatible_with_native_backend() -> None:
+    """tree_source='mujoco' + backend='pinocchio-casadi' fails loudly."""
+    pytest.importorskip("mujoco")
+    with pytest.raises(ToolchainError, match="incompatible"):
+        generate_dynamics(
+            _TWO_LINK_URDF, tree_source="mujoco", backend="pinocchio-casadi"
+        )
+
+
+@pytest.mark.unit
+def test_mujoco_tree_source_so100_matches_mjx() -> None:
+    """The MuJoCo tree source matches the real SO-100 MJX dynamics (contact-free)."""
+    pytest.importorskip("mujoco")
+    pytest.importorskip("jaxterity")
+    import jax
+
+    jax.config.update("jax_enable_x64", True)
+    import jax.numpy as jnp
+    from jaxterity.zoo import load
+
+    robot = load("so100")
+    f_mjx = robot.functional_dynamics()
+    # tree_source='mujoco' auto-reads armature/damping from the compiled model.
+    dyn = generate_dynamics(
+        robot.to_mjcf(), source_format="mjcf", tree_source="mujoco", name="so100_mj"
+    )
+    nv = 6
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(24):
+        q = rng.uniform(-0.15, 0.15, nv)
+        v = rng.uniform(-0.1, 0.1, nv)
+        tau = rng.uniform(-0.05, 0.05, nv)
+        x = np.concatenate([q, v])
+        gen = np.asarray(dyn(x, tau)[0])[nv:]
+        mjx = np.asarray(f_mjx(jnp.asarray(x), jnp.asarray(tau)))[nv:]
+        worst = max(worst, np.linalg.norm(gen - mjx) / (np.linalg.norm(mjx) + 1e-12))
+    assert worst < 1e-4, f"SO-100 mujoco-tree vs MJX worst rel {worst:.2e}"
+
+
+@pytest.mark.unit
+def test_mujoco_tree_source_branched_humanoid() -> None:
+    """A real *branched* humanoid (Unitree G1, 29 DoF) generates correctly.
+
+    The reference is the unconstrained rigid-body dynamics (pin.aba with the
+    model's armature) — MJX forward dynamics for a 29-DoF humanoid has joint-limit
+    constraint forces active at essentially every pose, which the deployed model
+    excludes by design (limits live in the OCP, not the dynamics; T-124/T-122).
+    """
+    pytest.importorskip("mujoco")
+    pinocchio_casadi_free = pytest.importorskip("pinocchio")
+    jaxterity = pytest.importorskip("jaxterity")  # noqa: F841
+    import mujoco
+    from jaxterity.zoo import load
+
+    robot = load("unitree_g1")
+    mjcf = robot.to_mjcf()
+    dyn = generate_dynamics(mjcf, source_format="mjcf", tree_source="mujoco", name="g1")
+    nv = 29
+    assert dyn.input_shapes == ((2 * nv,), (nv,))  # branched, 29 DoF, nq==nv
+
+    # Reference: Pinocchio ABA with the same (MuJoCo-read) armature.
+    import os as _os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".xml", delete=False) as fh:
+        fh.write(mjcf)
+        p = fh.name
+    try:
+        pm = pinocchio_casadi_free.buildModelFromMJCF(p)
+        mj = mujoco.MjModel.from_xml_path(p)
+    finally:
+        _os.unlink(p)
+    assert float(np.max(mj.dof_armature)) > 0  # humanoid armature is non-zero
+    pm.gravity.linear = np.array([0.0, 0.0, -9.81])
+    pm.armature = np.asarray(mj.dof_armature)
+    pd = pm.createData()
+
+    rng = np.random.default_rng(0)
+    worst = 0.0
+    for _ in range(32):
+        q = rng.uniform(-0.5, 0.5, nv)
+        v = rng.uniform(-0.3, 0.3, nv)
+        tau = rng.uniform(-0.1, 0.1, nv)
+        gen = np.asarray(dyn(np.concatenate([q, v]), tau)[0])[nv:]
+        ref = np.asarray(pinocchio_casadi_free.aba(pm, pd, q, v, tau))
+        worst = max(worst, np.linalg.norm(gen - ref) / (np.linalg.norm(ref) + 1e-12))
+    assert worst < 1e-4, f"G1 mujoco-tree vs unconstrained RBD worst rel {worst:.2e}"
+
+
+@pytest.mark.unit
 def test_generated_so100_matches_mjx_reference() -> None:
     """Generated SO-100 dynamics match the robot's MJX functional_dynamics.
 
