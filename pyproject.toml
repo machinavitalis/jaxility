@@ -83,6 +83,10 @@ executorch = [
   "onnx2torch>=1.5",
   "executorch>=0.4",
 ]
+# Rigid-body-dynamics generator (T-124): lower any fixed-base URDF/MJCF to
+# CasADi via Pinocchio's ABA codegen, instead of hand-writing per-topology
+# dynamics. `pin` is the PyPI wheel for Pinocchio (ships CasADi + MJCF support).
+rbd = ["pin>=3.1"]
 # Arm FVP (Fixed Virtual Platforms) is a system-level dependency; no PyPI deps.
 fvp = []
 # Benchmark harness extras (psutil etc.) populated later.

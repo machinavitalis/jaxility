@@ -26,6 +26,7 @@ from .jax_to_casadi import (
     CasadiFunction,
     translate,
 )
+from .pinocchio_rbd import generate_dynamics
 
 __all__ = [
     "CASADI_TO_ACADOS_SCHEMA_V0",
@@ -37,6 +38,7 @@ __all__ = [
     "assert_supported",
     "build_ocp",
     "coverage_markdown",
+    "generate_dynamics",
     "lookup",
     "translate",
 ]

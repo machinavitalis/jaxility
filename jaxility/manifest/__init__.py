@@ -30,6 +30,7 @@ from .toolchain_detect import (
     detect_acados_library_version,
     detect_acados_template_version,
     detect_casadi_version,
+    detect_pinocchio_version,
     detect_toolchain_versions,
 )
 from .verify import (
@@ -60,6 +61,7 @@ __all__ = [
     "detect_acados_library_version",
     "detect_acados_template_version",
     "detect_casadi_version",
+    "detect_pinocchio_version",
     "detect_toolchain_versions",
     "load_manifest",
     "verify_cli",
