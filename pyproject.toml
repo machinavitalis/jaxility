@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jaxility"
-version = "1.0.0"
+version = "1.1.0"
 description = "Open-source compiler from JAX-trained robotics to Arm silicon, with signed attestation manifests. Consumes Jaxterity calibrated robots; emits cross-compiled binaries with verifiable provenance."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -35,12 +35,11 @@ classifiers = [
 ]
 
 # Core runtime dependencies. ``jaxonomy`` ships transitively through
-# ``jaxterity``; both are editable installs from local checkouts during
-# bootstrap. The ``jaxterity`` requirement is currently unbounded because the
-# local checkout is still ``0.0.1.dev0``; the T-001 spec target is
-# ``jaxterity>=0.2,<0.3`` and will be tightened once Jaxterity tags 0.2.
+# ``jaxterity``. The floor is the first Jaxterity wheel whose package data
+# (zoo URDF/MJCF models, calibrated.json) actually ships — the 1.0.x
+# wheels contained only .py files, so every zoo robot failed to load.
 dependencies = [
-  "jaxterity",
+  "jaxterity>=1.1",
   "casadi>=3.7,<3.8",     # JAX-to-acados symbolic boundary (ADR-001)
   "pydantic>=2.6",        # manifest, target, coverage schemas (PATTERNS §3.3)
   "cryptography>=42",     # manifest hashing primitives

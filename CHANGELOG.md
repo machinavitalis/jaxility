@@ -10,6 +10,100 @@ live in commits, not here.
 
 ---
 
+## [1.1.0] - 2026-07-22
+
+The generator release: rigid-body dynamics compiled from a robot description
+instead of hand-written per topology, and the zoo's first branched robot.
+
+### Dynamics generator — URDF/MJCF → CasADi
+
+- **`generate_dynamics(path)`.** Forward dynamics for any fixed-base
+  URDF/MJCF as a `CasadiFunction`, with two backends behind `backend="auto"`:
+  `pinocchio-casadi` (native Pinocchio CasADi bindings, when importable) and
+  `jaxility-aba` (pip-only: Jaxility emits a CasADi Articulated Body Algorithm
+  over Pinocchio's parsed parent-index tree — general trees, multi-child
+  branches, revolute + prismatic joints). Gravity, joint armature, and joint
+  damping carry across; floating-base descriptions (`nq != nv`) are rejected
+  loudly. Verified against numeric `pin.aba` to ~3e-16 on serial and branched
+  robots; generated SO-100 dynamics match the MJX reference to ~3e-9. New
+  `[rbd]` extra installs the parser wheel (`pin`).
+- **MuJoCo tree source.** `generate_dynamics(..., tree_source="mujoco")`
+  builds the tree from a compiled MuJoCo model instead of Pinocchio's MJCF
+  parser: reads `dof_armature`/`dof_damping` directly (the MJCF parser zeroes
+  armature — dominant on light distal joints) and folds fixed appendage bodies
+  into their moving ancestor.
+- **Op-level audit trail.** Generated graphs populate the manifest's
+  `primitives_used` with the CasADi ops actually emitted (`casadi:sin`,
+  `casadi:mul`, …), so a graph that never came from a jaxpr still carries an
+  audit trail. Pinocchio's version is recorded in `toolchain_versions` as
+  generated-dynamics provenance; `build_for_target` gained an
+  `extra_toolchain_versions` merge parameter.
+- **`jaxility build-urdf <path>`.** One command from a robot description to an
+  attested artifact: `generate_dynamics` → joint-space regulation OCP →
+  `build_for_target`. The manifest's source handle is the BLAKE3 hash of the
+  description bytes.
+
+### Robot zoo — three new robots end-to-end
+
+- **Unitree G1 (`unitree_g1`) — the first branched robot.** Fixed-base,
+  29-DoF, all-hinge humanoid; dynamics come from
+  `generate_dynamics(tree_source="mujoco")` with zero hand-written dynamics
+  code, validated against the unconstrained rigid-body reference to ~1.7e-7.
+  Builds a 58-state / 29-input WBC joint-space regulation OCP end-to-end.
+  `ZooDeploymentConfig` gained a `casadi_dynamics_factory` hook so
+  `jaxility build` honors generator-sourced dynamics ahead of the
+  JAX-translate path.
+- **Crazyflie (`crazyflie`).** Closed-form Newton–Euler quadrotor dynamics
+  (13-state floating base, thrust/moment inputs) sourced from the calibrated
+  Robot; matches the MJX reference to ~1e-13. Ships a hover tracking-MPC
+  template (quaternion penalized in the tangent sense).
+- **SO-100 (`so100`).** The zoo's first manipulator: Featherstone Articulated
+  Body Algorithm dynamics from the calibrated spatial tree — no `M(q)⁻¹`
+  solve, so it stays inside the lowerable subset. Manipulator-grade fidelity
+  (~1e-5 relative vs MJX; a representational floor of independent-recursion
+  vs MuJoCo's CRB, not a bug). Ships a WBC joint-space regulation template.
+- Zoo status: **4 of 5 entries build real artifacts** (cartpole, crazyflie,
+  so100, unitree_g1); `berkeley_humanoid_lite` remains a stub.
+
+### Lowering completeness
+
+- `broadcast_in_dim`: rank-1→2 row/column broadcasts and scalar→vector
+  materialization into matmul.
+- `dot_general`: numpy-constant operands and 1D·1D inner products (`aᵀ@b`).
+- Implicit broadcasting in `add`/`sub`/`mul`/`div` (outer-product shapes).
+
+### Targets — aarch64-linux family broadened
+
+- `cortex-a55`, `cortex-a78`, `cortex-a710`, `neoverse-n1`, and
+  `qualcomm-iq10` now cross-compile end-to-end alongside `cortex-a76`
+  (per-family `-mcpu` cflags), with plan-level tests everywhere and real-ELF
+  compile tests where the toolchain is present.
+
+### Attestation & provenance
+
+- **Toolchain integrity is enforced in the build path.**
+  `cross_build_for_target` verifies the cross-toolchain binary against a real
+  SHA-256 pin (hard-fail on mismatch) or records
+  `toolchain-integrity:<binary> = "unverified"` in the manifest — loud, never
+  silent.
+- **Byte-deterministic dependency archives.** Each cross-built `.a` is
+  normalized with `objcopy --enable-deterministic-archives` before hashing, so
+  identical inputs yield byte-identical archives and stable
+  `dep-archive:<name>` manifest hashes.
+
+### Packaging & CI
+
+- `import jaxility.policy` no longer requires `onnx`: the import is lazy and
+  export fails at call time with a structured `ToolchainError` unless the
+  `[policy]` extra is installed.
+- The `jaxterity` dependency now floors at `>=1.1` — the first Jaxterity
+  wheel that ships its package data (the 1.0.x wheels contained only
+  `.py` files, so every zoo robot failed to load from a PyPI install) — and
+  `pip install jaxility` resolves a working stack.
+- CI gate (lint + types + tests) green on Python 3.10 / 3.11 / 3.12.
+
+---
+
 ## [1.0.0] - 2026-07-11
 
 The initial public release, grouped by theme.
