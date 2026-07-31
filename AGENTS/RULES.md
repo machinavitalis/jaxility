@@ -19,7 +19,7 @@ New or changed claims in a shippable surface get an evidence row in `CLAIMS.md` 
 
 ## Workflow
 
-One task = one branch = one PR (`task/T-NNN-short-title`; commits reference `T-NNN`). Commit at each acceptance criterion, not just at the end. Run the test suite before merging; don't merge red. Merge to `main` autonomously when acceptance passes and nothing below applies.
+One task = one branch (`task/short-title`). Commit at each acceptance criterion, not just at the end. Run the test suite before merging; don't merge red. Merge to `main` autonomously when acceptance passes and nothing below applies.
 
 Jaxility-specific workflow notes:
 
